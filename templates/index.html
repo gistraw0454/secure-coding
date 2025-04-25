@@ -1,6 +1,52 @@
 {% extends "base.html" %}
-{% block title %}환영합니다{% endblock %}
+
+{% block title %}홈{% endblock %}
+
 {% block content %}
-<h1>My Market에 오신 것을 환영합니다</h1>
-<p><a href="{{ url_for('login') }}">로그인</a> 또는 <a href="{{ url_for('register') }}">회원가입</a> 해주세요.</p>
+<div class="container">
+    <div class="jumbotron text-center">
+        <h1 class="display-4">중고거래 플랫폼에 오신 것을 환영합니다!</h1>
+        <p class="lead">안전하고 편리한 중고거래 서비스를 이용해보세요.</p>
+        {% if not session.user_id %}
+        <hr class="my-4">
+        <p>서비스를 이용하시려면 로그인이 필요합니다.</p>
+        <p class="lead">
+            <a class="btn btn-primary btn-lg" href="{{ url_for('login') }}" role="button">로그인</a>
+            <a class="btn btn-secondary btn-lg" href="{{ url_for('register') }}" role="button">회원가입</a>
+        </p>
+        {% endif %}
+    </div>
+
+    {% if session.user_id %}
+    <div class="row mt-4">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">상품 등록</h5>
+                    <p class="card-text">여러분의 상품을 등록하고 판매를 시작하세요.</p>
+                    <a href="{{ url_for('new_product') }}" class="btn btn-primary">상품 등록하기</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">상품 검색</h5>
+                    <p class="card-text">원하는 상품을 검색하고 구매하세요.</p>
+                    <a href="{{ url_for('list_products') }}" class="btn btn-primary">상품 검색하기</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">채팅하기</h5>
+                    <p class="card-text">다른 사용자들과 실시간으로 대화하세요.</p>
+                    <a href="{{ url_for('global_chat') }}" class="btn btn-primary">채팅방 입장</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
 {% endblock %}

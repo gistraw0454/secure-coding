@@ -11,8 +11,10 @@ from functools import wraps
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import time
+import os
 
 app = Flask(__name__)
+app.config.from_object('config.Config')
 app.config['SECRET_KEY'] = 'your-secret-key-here'  # 실제 운영 환경에서는 환경 변수로 관리
 app.config['SESSION_COOKIE_SECURE'] = True  # HTTPS에서만 쿠키 전송
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # JavaScript에서 쿠키 접근 불가
