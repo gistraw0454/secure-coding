@@ -10,6 +10,7 @@ from flask_wtf.csrf import CSRFProtect
 from functools import wraps
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+import time
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here'  # 실제 운영 환경에서는 환경 변수로 관리
@@ -33,6 +34,18 @@ def get_db():
     if db is None:
         db = g._database = sqlite3.connect(DATABASE)
         db.row_factory = sqlite3.Row  # 결과를 dict처럼 사용하기 위함
+        
+        # 기본 보안 설정
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("PRAGMA secure_delete=ON")
+    return db
+
+def get_readonly_db():
+    db = getattr(g, '_readonly_database', None)
+    if db is None:
+        db = g._readonly_database = sqlite3.connect(DATABASE)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA query_only=ON")
     return db
 
 @app.teardown_appcontext
@@ -40,12 +53,29 @@ def close_connection(exception):
     db = getattr(g, '_database', None)
     if db is not None:
         db.close()
+    
+    readonly_db = getattr(g, '_readonly_database', None)
+    if readonly_db is not None:
+        readonly_db.close()
 
 # 테이블 생성 (최초 실행 시에만)
 def init_db():
     with app.app_context():
-        db = get_db()
+        # 데이터베이스 생성
+        db = sqlite3.connect(DATABASE)
         cursor = db.cursor()
+        
+        # 데이터베이스 권한 설정
+        cursor.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging 모드 활성화
+        cursor.execute("PRAGMA foreign_keys=ON")   # 외래 키 제약 조건 활성화
+        cursor.execute("PRAGMA secure_delete=ON")  # 안전한 삭제 모드 활성화
+        
+        # 읽기 전용 트랜잭션 설정
+        def get_readonly_db():
+            db = sqlite3.connect(DATABASE)
+            db.execute("PRAGMA query_only=ON")  # 읽기 전용 모드
+            return db
+        
         # 사용자 테이블 수정
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user (
@@ -145,7 +175,18 @@ def init_db():
                 FOREIGN KEY (receiver_id) REFERENCES user (id)
             )
         """)
+        # 로그인 시도 테이블 추가
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                ip_address TEXT NOT NULL,
+                attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL
+            )
+        """)
         db.commit()
+        return db
 
 def validate_input(username, password):
     # XSS 방지를 위한 특수문자 이스케이프
@@ -241,31 +282,48 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        ip_address = request.remote_addr
+        
+        # 로그인 시도 횟수 확인
+        attempt_count = check_login_attempts(username, ip_address)
+        if attempt_count >= 5:
+            flash('너무 많은 로그인 시도가 있었습니다. 10분 후에 다시 시도해주세요.')
+            return redirect(url_for('login'))
         
         db = get_db()
         cursor = db.cursor()
         cursor.execute("SELECT * FROM user WHERE username = ?", (username,))
         user = cursor.fetchone()
         
+        login_success = False
         if user and bcrypt.checkpw(password.encode('utf-8'), user['password']):
             if user['status'] == 'suspended':
                 flash('계정이 정지되었습니다. 관리자에게 문의하세요.')
-                return redirect(url_for('login'))
+            else:
+                session['user_id'] = user['id']
+                session['last_activity'] = datetime.now().isoformat()
+                session.permanent = True
                 
-            session['user_id'] = user['id']
-            session['last_activity'] = datetime.now().isoformat()
-            session.permanent = True  # 세션 만료 시간 활성화
-            
-            # 마지막 로그인 시간 업데이트
-            cursor.execute(
-                "UPDATE user SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
-                (user['id'],)
-            )
-            db.commit()
-            
-            flash('로그인 성공!')
-            return redirect(url_for('dashboard'))
-        else:
+                # 마지막 로그인 시간 업데이트
+                cursor.execute(
+                    "UPDATE user SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
+                    (user['id'],)
+                )
+                db.commit()
+                
+                login_success = True
+                flash('로그인 성공!')
+                
+                # 성공한 로그인 기록
+                add_login_attempt(username, ip_address, True)
+                return redirect(url_for('dashboard'))
+        
+        # 실패한 로그인 기록
+        add_login_attempt(username, ip_address, False)
+        
+        if not login_success:
+            # 실패 시 지연 시간 추가 (시도 횟수에 따라 증가)
+            time.sleep(min(attempt_count * 2, 10))
             flash('아이디 또는 비밀번호가 올바르지 않습니다.')
             return redirect(url_for('login'))
             
@@ -403,8 +461,9 @@ def list_products():
 
 # 상품 상세 조회
 @app.route('/product/<product_id>')
+@readonly_operation
 def view_product(product_id):
-    db = get_db()
+    db = get_db()  # 이 db는 읽기 전용
     cursor = db.cursor()
     cursor.execute("""
         SELECT p.*, u.username as seller_name, u.status as seller_status
@@ -449,24 +508,65 @@ def report():
         return redirect(url_for('dashboard'))
     return render_template('report.html')
 
-# 사용자 신고 처리
-@app.route('/report_user/<user_id>', methods=['POST'])
-def report_user(user_id):
-    if 'user_id' not in session:
-        return jsonify({'error': '로그인이 필요합니다.'}), 401
+def check_report_limit(reporter_id, target_id):
+    db = get_db()
+    cursor = db.cursor()
     
+    # 동일 대상에 대한 24시간 내 신고 횟수 확인
+    cursor.execute("""
+        SELECT COUNT(*) as report_count
+        FROM report
+        WHERE reporter_id = ?
+        AND target_id = ?
+        AND created_at > datetime('now', '-24 hours')
+    """, (reporter_id, target_id))
+    
+    same_target_count = cursor.fetchone()['report_count']
+    if same_target_count > 0:
+        return False, "동일한 대상에 대해 24시간 내 한 번만 신고할 수 있습니다."
+    
+    # 사용자의 24시간 내 총 신고 횟수 확인
+    cursor.execute("""
+        SELECT COUNT(*) as total_count
+        FROM report
+        WHERE reporter_id = ?
+        AND created_at > datetime('now', '-24 hours')
+    """, (reporter_id,))
+    
+    total_count = cursor.fetchone()['total_count']
+    if total_count >= 5:
+        return False, "24시간 내 최대 5회까지만 신고할 수 있습니다."
+    
+    return True, None
+
+# 사용자 신고
+@app.route('/report_user/<user_id>', methods=['POST'])
+@login_required
+def report_user(user_id):
     reason = request.form.get('reason')
     if not reason:
-        return jsonify({'error': '신고 사유를 입력해주세요.'}), 400
-        
+        flash('신고 사유를 입력해주세요.')
+        return redirect(url_for('view_user', user_id=user_id))
+    
+    # 자기 자신 신고 방지
+    if user_id == session['user_id']:
+        flash('자기 자신을 신고할 수 없습니다.')
+        return redirect(url_for('view_user', user_id=user_id))
+    
+    # 신고 제한 확인
+    can_report, message = check_report_limit(session['user_id'], user_id)
+    if not can_report:
+        flash(message)
+        return redirect(url_for('view_user', user_id=user_id))
+    
     db = get_db()
     cursor = db.cursor()
     
     # 신고 기록 추가
     report_id = str(uuid.uuid4())
     cursor.execute(
-        "INSERT INTO report (id, reporter_id, target_id, target_type, reason) VALUES (?, ?, ?, ?, ?)",
-        (report_id, session['user_id'], user_id, 'user', reason)
+        "INSERT INTO report (id, reporter_id, target_id, target_type, reason, status) VALUES (?, ?, ?, ?, ?, ?)",
+        (report_id, session['user_id'], user_id, 'user', reason, 'pending')
     )
     
     # 신고 횟수 증가 및 자동 정지 처리
@@ -476,9 +576,10 @@ def report_user(user_id):
     
     if warning_count >= 3:
         cursor.execute("UPDATE user SET status = 'suspended' WHERE id = ?", (user_id,))
-        
+    
     db.commit()
-    return jsonify({'message': '신고가 접수되었습니다.'}), 200
+    flash('신고가 접수되었습니다.')
+    return redirect(url_for('view_user', user_id=user_id))
 
 # 관리자용: 사용자 상태 관리
 @app.route('/admin')
@@ -563,22 +664,34 @@ def update_product_status(product_id):
 
 # 상품 신고
 @app.route('/report_product/<product_id>', methods=['POST'])
+@login_required
 def report_product(product_id):
-    if 'user_id' not in session:
-        return jsonify({'error': '로그인이 필요합니다.'}), 401
-    
     reason = request.form.get('reason')
     if not reason:
-        return jsonify({'error': '신고 사유를 입력해주세요.'}), 400
-        
+        flash('신고 사유를 입력해주세요.')
+        return redirect(url_for('view_product', product_id=product_id))
+    
+    # 자신의 상품 신고 방지
     db = get_db()
     cursor = db.cursor()
+    cursor.execute("SELECT seller_id FROM product WHERE id = ?", (product_id,))
+    product = cursor.fetchone()
+    
+    if product['seller_id'] == session['user_id']:
+        flash('자신의 상품을 신고할 수 없습니다.')
+        return redirect(url_for('view_product', product_id=product_id))
+    
+    # 신고 제한 확인
+    can_report, message = check_report_limit(session['user_id'], product_id)
+    if not can_report:
+        flash(message)
+        return redirect(url_for('view_product', product_id=product_id))
     
     # 신고 기록 추가
     report_id = str(uuid.uuid4())
     cursor.execute(
-        "INSERT INTO report (id, reporter_id, target_id, target_type, reason) VALUES (?, ?, ?, ?, ?)",
-        (report_id, session['user_id'], product_id, 'product', reason)
+        "INSERT INTO report (id, reporter_id, target_id, target_type, reason, status) VALUES (?, ?, ?, ?, ?, ?)",
+        (report_id, session['user_id'], product_id, 'product', reason, 'pending')
     )
     
     # 상품 신고 횟수 증가 및 자동 비활성화
@@ -588,9 +701,10 @@ def report_product(product_id):
     
     if report_count >= 3:
         cursor.execute("UPDATE product SET status = 'inactive' WHERE id = ?", (product_id,))
-        
+    
     db.commit()
-    return jsonify({'message': '상품 신고가 접수되었습니다.'}), 200
+    flash('상품 신고가 접수되었습니다.')
+    return redirect(url_for('view_product', product_id=product_id))
 
 # 1대1 채팅방 생성
 @app.route('/chat/create/<product_id>', methods=['POST'])
@@ -1036,6 +1150,46 @@ def internal_error(error):
 @app.route('/error')
 def error():
     return render_template('error.html')
+
+def check_login_attempts(username, ip_address):
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 최근 10분간의 실패한 로그인 시도 횟수 확인
+    cursor.execute("""
+        SELECT COUNT(*) as attempt_count
+        FROM login_attempts
+        WHERE username = ? 
+        AND ip_address = ?
+        AND success = 0
+        AND attempted_at > datetime('now', '-10 minutes')
+    """, (username, ip_address))
+    
+    result = cursor.fetchone()
+    return result['attempt_count']
+
+def add_login_attempt(username, ip_address, success):
+    db = get_db()
+    cursor = db.cursor()
+    attempt_id = str(uuid.uuid4())
+    
+    cursor.execute("""
+        INSERT INTO login_attempts (id, username, ip_address, success)
+        VALUES (?, ?, ?, ?)
+    """, (attempt_id, username, ip_address, success))
+    
+    db.commit()
+
+# 읽기 전용 작업에 대한 데코레이터
+def readonly_operation(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        g._database = get_readonly_db()
+        try:
+            return f(*args, **kwargs)
+        finally:
+            g._database = None
+    return decorated_function
 
 if __name__ == '__main__':
     init_db()
