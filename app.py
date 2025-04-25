@@ -773,7 +773,7 @@ def transfer_money():
         return redirect(url_for('login'))
         
     if request.method == 'POST':
-        receiver_username = request.form['receiver']
+        receiver_username = request.form['receiver_username']
         amount = int(request.form['amount'])
         description = request.form.get('description', '')
         
@@ -830,7 +830,12 @@ def transfer_money():
             return redirect(url_for('transfer_money'))
             
     # GET 요청: 송금 폼 표시
-    return render_template('transfer.html')
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM wallet WHERE user_id = ?", (session['user_id'],))
+    wallet = cursor.fetchone()
+    
+    return render_template('transfer.html', wallet=wallet)
 
 if __name__ == '__main__':
     init_db()  # 앱 컨텍스트 내에서 테이블 생성
