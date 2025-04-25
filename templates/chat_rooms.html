@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}채팅 목록{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2>채팅 목록</h2>
+        <div class="list-group">
+            {% for room in rooms %}
+            <a href="{{ url_for('get_chat_messages', room_id=room.id) }}" class="list-group-item list-group-item-action">
+                <div class="d-flex w-100 justify-content-between">
+                    <h5 class="mb-1">{{ room.product_title }}</h5>
+                    <small>{{ room.created_at }}</small>
+                </div>
+                <p class="mb-1">대화상대: {{ room.other_user_name }}</p>
+            </a>
+            {% else %}
+            <div class="alert alert-info">
+                아직 진행 중인 채팅이 없습니다.
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %} 

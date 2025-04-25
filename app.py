@@ -1,7 +1,8 @@
 import sqlite3
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, session, flash, g
-from flask_socketio import SocketIO, send
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for, session, flash, g, jsonify
+from flask_socketio import SocketIO, send, join_room, leave_room, emit
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
@@ -27,32 +28,81 @@ def init_db():
     with app.app_context():
         db = get_db()
         cursor = db.cursor()
-        # 사용자 테이블 생성
+        # 사용자 테이블 수정
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user (
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 password TEXT NOT NULL,
-                bio TEXT
+                bio TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP,
+                warning_count INTEGER DEFAULT 0
             )
         """)
-        # 상품 테이블 생성
+        # 상품 테이블 수정
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS product (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL,
                 price TEXT NOT NULL,
-                seller_id TEXT NOT NULL
+                seller_id TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                category TEXT,
+                report_count INTEGER DEFAULT 0,
+                FOREIGN KEY (seller_id) REFERENCES user (id)
             )
         """)
-        # 신고 테이블 생성
+        # 신고 테이블 수정
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS report (
                 id TEXT PRIMARY KEY,
                 reporter_id TEXT NOT NULL,
                 target_id TEXT NOT NULL,
-                reason TEXT NOT NULL
+                target_type TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (reporter_id) REFERENCES user (id)
+            )
+        """)
+        # 채팅방 테이블 추가
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_room (
+                id TEXT PRIMARY KEY,
+                product_id TEXT NOT NULL,
+                buyer_id TEXT NOT NULL,
+                seller_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                FOREIGN KEY (product_id) REFERENCES product (id),
+                FOREIGN KEY (buyer_id) REFERENCES user (id),
+                FOREIGN KEY (seller_id) REFERENCES user (id)
+            )
+        """)
+        # 채팅 메시지 테이블 추가
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_message (
+                id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (room_id) REFERENCES chat_room (id),
+                FOREIGN KEY (sender_id) REFERENCES user (id)
+            )
+        """)
+        # 전체 채팅 메시지 테이블 추가
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS global_chat_message (
+                id TEXT PRIMARY KEY,
+                sender_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sender_id) REFERENCES user (id)
             )
         """)
         db.commit()
@@ -96,7 +146,13 @@ def login():
         cursor.execute("SELECT * FROM user WHERE username = ? AND password = ?", (username, password))
         user = cursor.fetchone()
         if user:
+            if user['status'] == 'suspended':
+                flash('계정이 정지되었습니다. 관리자에게 문의하세요.')
+                return redirect(url_for('login'))
             session['user_id'] = user['id']
+            # 마지막 로그인 시간 업데이트
+            cursor.execute("UPDATE user SET last_login = CURRENT_TIMESTAMP WHERE id = ?", (user['id'],))
+            db.commit()
             flash('로그인 성공!')
             return redirect(url_for('dashboard'))
         else:
@@ -152,32 +208,102 @@ def new_product():
         title = request.form['title']
         description = request.form['description']
         price = request.form['price']
+        category = request.form.get('category', '')
+        
         db = get_db()
         cursor = db.cursor()
+        
+        # 사용자 상태 확인
+        cursor.execute("SELECT status FROM user WHERE id = ?", (session['user_id'],))
+        user = cursor.fetchone()
+        if user['status'] != 'active':
+            flash('정지된 계정은 상품을 등록할 수 없습니다.')
+            return redirect(url_for('dashboard'))
+        
         product_id = str(uuid.uuid4())
         cursor.execute(
-            "INSERT INTO product (id, title, description, price, seller_id) VALUES (?, ?, ?, ?, ?)",
-            (product_id, title, description, price, session['user_id'])
+            "INSERT INTO product (id, title, description, price, seller_id, category) VALUES (?, ?, ?, ?, ?, ?)",
+            (product_id, title, description, price, session['user_id'], category)
         )
         db.commit()
         flash('상품이 등록되었습니다.')
         return redirect(url_for('dashboard'))
     return render_template('new_product.html')
 
-# 상품 상세보기
+# 상품 목록 조회 (필터링 기능 추가)
+@app.route('/products')
+def list_products():
+    category = request.args.get('category')
+    min_price = request.args.get('min_price')
+    max_price = request.args.get('max_price')
+    search_query = request.args.get('query')
+    
+    db = get_db()
+    cursor = db.cursor()
+    
+    query = """
+        SELECT p.*, u.username as seller_name 
+        FROM product p
+        JOIN user u ON p.seller_id = u.id
+        WHERE p.status = 'active'
+    """
+    params = []
+    
+    if category:
+        query += " AND p.category = ?"
+        params.append(category)
+    
+    if min_price:
+        query += " AND CAST(REPLACE(p.price, ',', '') AS INTEGER) >= ?"
+        params.append(min_price)
+        
+    if max_price:
+        query += " AND CAST(REPLACE(p.price, ',', '') AS INTEGER) <= ?"
+        params.append(max_price)
+        
+    if search_query:
+        query += " AND (p.title LIKE ? OR p.description LIKE ?)"
+        search_pattern = f"%{search_query}%"
+        params.extend([search_pattern, search_pattern])
+        
+    query += " ORDER BY p.created_at DESC"
+    
+    cursor.execute(query, params)
+    products = cursor.fetchall()
+    
+    # 카테고리 목록 조회
+    cursor.execute("SELECT DISTINCT category FROM product WHERE category IS NOT NULL")
+    categories = [row['category'] for row in cursor.fetchall()]
+    
+    return render_template('products.html', products=products, categories=categories)
+
+# 상품 상세 조회
 @app.route('/product/<product_id>')
 def view_product(product_id):
     db = get_db()
     cursor = db.cursor()
-    cursor.execute("SELECT * FROM product WHERE id = ?", (product_id,))
+    cursor.execute("""
+        SELECT p.*, u.username as seller_name, u.status as seller_status
+        FROM product p
+        JOIN user u ON p.seller_id = u.id
+        WHERE p.id = ?
+    """, (product_id,))
     product = cursor.fetchone()
+    
     if not product:
         flash('상품을 찾을 수 없습니다.')
         return redirect(url_for('dashboard'))
-    # 판매자 정보 조회
-    cursor.execute("SELECT * FROM user WHERE id = ?", (product['seller_id'],))
-    seller = cursor.fetchone()
-    return render_template('view_product.html', product=product, seller=seller)
+        
+    if product['status'] != 'active':
+        flash('비활성화된 상품입니다.')
+        return redirect(url_for('dashboard'))
+        
+    # 판매자가 정지 상태인 경우
+    if product['seller_status'] != 'active':
+        flash('이 상품의 판매자가 현재 정지 상태입니다.')
+        return redirect(url_for('dashboard'))
+    
+    return render_template('view_product.html', product=product)
 
 # 신고하기
 @app.route('/report', methods=['GET', 'POST'])
@@ -199,11 +325,297 @@ def report():
         return redirect(url_for('dashboard'))
     return render_template('report.html')
 
-# 실시간 채팅: 클라이언트가 메시지를 보내면 전체 브로드캐스트
-@socketio.on('send_message')
-def handle_send_message_event(data):
-    data['message_id'] = str(uuid.uuid4())
-    send(data, broadcast=True)
+# 사용자 신고 처리
+@app.route('/report_user/<user_id>', methods=['POST'])
+def report_user(user_id):
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+    
+    reason = request.form.get('reason')
+    if not reason:
+        return jsonify({'error': '신고 사유를 입력해주세요.'}), 400
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 신고 기록 추가
+    report_id = str(uuid.uuid4())
+    cursor.execute(
+        "INSERT INTO report (id, reporter_id, target_id, target_type, reason) VALUES (?, ?, ?, ?, ?)",
+        (report_id, session['user_id'], user_id, 'user', reason)
+    )
+    
+    # 신고 횟수 증가 및 자동 정지 처리
+    cursor.execute("UPDATE user SET warning_count = warning_count + 1 WHERE id = ?", (user_id,))
+    cursor.execute("SELECT warning_count FROM user WHERE id = ?", (user_id,))
+    warning_count = cursor.fetchone()['warning_count']
+    
+    if warning_count >= 3:
+        cursor.execute("UPDATE user SET status = 'suspended' WHERE id = ?", (user_id,))
+        
+    db.commit()
+    return jsonify({'message': '신고가 접수되었습니다.'}), 200
+
+# 관리자용: 사용자 상태 관리
+@app.route('/admin/user/<user_id>/status', methods=['POST'])
+def update_user_status(user_id):
+    if 'user_id' not in session:
+        return jsonify({'error': '권한이 없습니다.'}), 401
+        
+    new_status = request.form.get('status')
+    if new_status not in ['active', 'suspended']:
+        return jsonify({'error': '잘못된 상태값입니다.'}), 400
+        
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("UPDATE user SET status = ? WHERE id = ?", (new_status, user_id))
+    db.commit()
+    
+    return jsonify({'message': '사용자 상태가 업데이트되었습니다.'}), 200
+
+# 상품 신고
+@app.route('/report_product/<product_id>', methods=['POST'])
+def report_product(product_id):
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+    
+    reason = request.form.get('reason')
+    if not reason:
+        return jsonify({'error': '신고 사유를 입력해주세요.'}), 400
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 신고 기록 추가
+    report_id = str(uuid.uuid4())
+    cursor.execute(
+        "INSERT INTO report (id, reporter_id, target_id, target_type, reason) VALUES (?, ?, ?, ?, ?)",
+        (report_id, session['user_id'], product_id, 'product', reason)
+    )
+    
+    # 상품 신고 횟수 증가 및 자동 비활성화
+    cursor.execute("UPDATE product SET report_count = report_count + 1 WHERE id = ?", (product_id,))
+    cursor.execute("SELECT report_count FROM product WHERE id = ?", (product_id,))
+    report_count = cursor.fetchone()['report_count']
+    
+    if report_count >= 3:
+        cursor.execute("UPDATE product SET status = 'inactive' WHERE id = ?", (product_id,))
+        
+    db.commit()
+    return jsonify({'message': '상품 신고가 접수되었습니다.'}), 200
+
+# 1대1 채팅방 생성
+@app.route('/chat/create/<product_id>', methods=['POST'])
+def create_chat_room(product_id):
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 상품 정보 확인
+    cursor.execute("SELECT seller_id FROM product WHERE id = ?", (product_id,))
+    product = cursor.fetchone()
+    if not product:
+        return jsonify({'error': '존재하지 않는 상품입니다.'}), 404
+        
+    # 판매자와 동일인인 경우 채팅방 생성 불가
+    if product['seller_id'] == session['user_id']:
+        return jsonify({'error': '자신의 상품에는 채팅방을 생성할 수 없습니다.'}), 400
+        
+    # 이미 존재하는 채팅방 확인
+    cursor.execute("""
+        SELECT id FROM chat_room 
+        WHERE product_id = ? AND buyer_id = ? AND seller_id = ?
+    """, (product_id, session['user_id'], product['seller_id']))
+    
+    existing_room = cursor.fetchone()
+    if existing_room:
+        return jsonify({'room_id': existing_room['id']}), 200
+        
+    # 새 채팅방 생성
+    room_id = str(uuid.uuid4())
+    cursor.execute("""
+        INSERT INTO chat_room (id, product_id, buyer_id, seller_id)
+        VALUES (?, ?, ?, ?)
+    """, (room_id, product_id, session['user_id'], product['seller_id']))
+    
+    db.commit()
+    return jsonify({'room_id': room_id, 'message': '채팅방이 생성되었습니다.'}), 201
+
+# 채팅방 목록 조회
+@app.route('/chat/rooms')
+def get_chat_rooms():
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 사용자가 참여중인 모든 채팅방 조회
+    cursor.execute("""
+        SELECT cr.*, p.title as product_title,
+               CASE WHEN cr.buyer_id = ? THEN u.username
+                    ELSE b.username
+               END as other_user_name
+        FROM chat_room cr
+        JOIN product p ON cr.product_id = p.id
+        JOIN user u ON cr.seller_id = u.id
+        JOIN user b ON cr.buyer_id = b.id
+        WHERE cr.buyer_id = ? OR cr.seller_id = ?
+        ORDER BY cr.created_at DESC
+    """, (session['user_id'], session['user_id'], session['user_id']))
+    
+    rooms = cursor.fetchall()
+    return jsonify({'rooms': [dict(room) for room in rooms]}), 200
+
+# 채팅 메시지 전송
+@socketio.on('join')
+def on_join(data):
+    room = data['room']
+    join_room(room)
+    
+@socketio.on('leave')
+def on_leave(data):
+    room = data['room']
+    leave_room(room)
+
+@socketio.on('chat_message')
+def handle_chat_message(data):
+    if 'user_id' not in session:
+        return
+        
+    room_id = data['room']
+    message = data['message']
+    
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 메시지 저장
+    message_id = str(uuid.uuid4())
+    cursor.execute("""
+        INSERT INTO chat_message (id, room_id, sender_id, message)
+        VALUES (?, ?, ?, ?)
+    """, (message_id, room_id, session['user_id'], message))
+    
+    db.commit()
+    
+    # 채팅방의 다른 사용자들에게 메시지 전송
+    emit('chat_message', {
+        'message_id': message_id,
+        'sender_id': session['user_id'],
+        'message': message,
+        'created_at': datetime.now().isoformat()
+    }, room=room_id)
+
+# 채팅 메시지 히스토리 조회
+@app.route('/chat/messages/<room_id>')
+def get_chat_messages(room_id):
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 채팅방 접근 권한 확인
+    cursor.execute("""
+        SELECT * FROM chat_room
+        WHERE id = ? AND (buyer_id = ? OR seller_id = ?)
+    """, (room_id, session['user_id'], session['user_id']))
+    
+    if not cursor.fetchone():
+        return jsonify({'error': '접근 권한이 없습니다.'}), 403
+        
+    # 메시지 히스토리 조회
+    cursor.execute("""
+        SELECT cm.*, u.username as sender_name
+        FROM chat_message cm
+        JOIN user u ON cm.sender_id = u.id
+        WHERE cm.room_id = ?
+        ORDER BY cm.created_at ASC
+    """, (room_id,))
+    
+    messages = cursor.fetchall()
+    return jsonify({'messages': [dict(msg) for msg in messages]}), 200
+
+# 상품 상태 변경 (관리자용)
+@app.route('/admin/product/<product_id>/status', methods=['POST'])
+def update_product_status(product_id):
+    if 'user_id' not in session:
+        return jsonify({'error': '권한이 없습니다.'}), 401
+        
+    new_status = request.form.get('status')
+    if new_status not in ['active', 'inactive']:
+        return jsonify({'error': '잘못된 상태값입니다.'}), 400
+        
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("UPDATE product SET status = ? WHERE id = ?", (new_status, product_id))
+    db.commit()
+    
+    return jsonify({'message': '상품 상태가 업데이트되었습니다.'}), 200
+
+# 전체 채팅방 페이지
+@app.route('/chat/global')
+def global_chat():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 최근 50개의 메시지 조회
+    cursor.execute("""
+        SELECT gm.*, u.username as sender_name
+        FROM global_chat_message gm
+        JOIN user u ON gm.sender_id = u.id
+        ORDER BY gm.created_at DESC
+        LIMIT 50
+    """)
+    
+    messages = cursor.fetchall()
+    messages = list(reversed(messages))  # 시간순 정렬
+    
+    # 현재 사용자 정보 조회
+    cursor.execute("SELECT username FROM user WHERE id = ?", (session['user_id'],))
+    current_user = cursor.fetchone()
+    
+    return render_template('global_chat.html', messages=messages, current_user=current_user)
+
+# 전체 채팅 메시지 전송 처리
+@socketio.on('global_message')
+def handle_global_message(data):
+    if 'user_id' not in session:
+        return
+        
+    message = data.get('message', '').strip()
+    if not message:
+        return
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 발신자 정보 조회
+    cursor.execute("SELECT username FROM user WHERE id = ?", (session['user_id'],))
+    sender = cursor.fetchone()
+    
+    # 메시지 저장
+    message_id = str(uuid.uuid4())
+    cursor.execute("""
+        INSERT INTO global_chat_message (id, sender_id, message)
+        VALUES (?, ?, ?)
+    """, (message_id, session['user_id'], message))
+    
+    db.commit()
+    
+    # 모든 클라이언트에게 메시지 브로드캐스트
+    emit('global_message', {
+        'message_id': message_id,
+        'sender_id': session['user_id'],
+        'sender_name': sender['username'],
+        'message': message,
+        'created_at': datetime.now().isoformat()
+    }, broadcast=True)
 
 if __name__ == '__main__':
     init_db()  # 앱 컨텍스트 내에서 테이블 생성

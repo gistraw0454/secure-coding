@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}채팅{% endblock %}
+
+{% block extra_css %}
+<style>
+    #messages {
+        height: 400px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    .message {
+        margin-bottom: 0.5rem;
+        padding: 0.5rem;
+        border-radius: 0.25rem;
+    }
+    .message.mine {
+        background-color: #007bff;
+        color: white;
+        margin-left: 20%;
+    }
+    .message.other {
+        background-color: #f8f9fa;
+        margin-right: 20%;
+    }
+    .message .sender {
+        font-size: 0.8rem;
+        color: #6c757d;
+    }
+    .message.mine .sender {
+        color: #e9ecef;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2>{{ product.title }}</h2>
+        <div id="messages">
+            {% for message in messages %}
+            <div class="message {% if message.sender_id == session.user_id %}mine{% else %}other{% endif %}">
+                <div class="sender">{{ message.sender_name }}</div>
+                <div class="content">{{ message.message }}</div>
+                <small class="time">{{ message.created_at }}</small>
+            </div>
+            {% endfor %}
+        </div>
+        <form id="message-form" class="input-group">
+            <input type="text" id="message-input" class="form-control" placeholder="메시지를 입력하세요...">
+            <button type="submit" class="btn btn-primary">전송</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const socket = io();
+    const room = '{{ room_id }}';
+    const messages = document.getElementById('messages');
+    const messageForm = document.getElementById('message-form');
+    const messageInput = document.getElementById('message-input');
+
+    // 채팅방 입장
+    socket.emit('join', { room: room });
+
+    // 메시지 전송
+    messageForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const message = messageInput.value.trim();
+        if (message) {
+            socket.emit('chat_message', {
+                room: room,
+                message: message
+            });
+            messageInput.value = '';
+        }
+    });
+
+    // 새 메시지 수신
+    socket.on('chat_message', (data) => {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${data.sender_id === '{{ session.user_id }}' ? 'mine' : 'other'}`;
+        messageDiv.innerHTML = `
+            <div class="sender">${data.sender_name || '사용자'}</div>
+            <div class="content">${data.message}</div>
+            <small class="time">${new Date(data.created_at).toLocaleString()}</small>
+        `;
+        messages.appendChild(messageDiv);
+        messages.scrollTop = messages.scrollHeight;
+    });
+
+    // 페이지 로드 시 스크롤을 맨 아래로
+    messages.scrollTop = messages.scrollHeight;
+</script>
+{% endblock %} 

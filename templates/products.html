@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}상품 목록{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <form method="get" class="card">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <select name="category" class="form-select">
+                            <option value="">카테고리 선택</option>
+                            {% for category in categories %}
+                            <option value="{{ category }}" {% if request.args.get('category') == category %}selected{% endif %}>
+                                {{ category }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="number" name="min_price" class="form-control" placeholder="최소 가격" 
+                               value="{{ request.args.get('min_price', '') }}">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="number" name="max_price" class="form-control" placeholder="최대 가격"
+                               value="{{ request.args.get('max_price', '') }}">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="text" name="query" class="form-control" placeholder="검색어"
+                               value="{{ request.args.get('query', '') }}">
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-primary">검색</button>
+                        <a href="{{ url_for('list_products') }}" class="btn btn-secondary">초기화</a>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row">
+    {% for product in products %}
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">{{ product.title }}</h5>
+                <h6 class="card-subtitle mb-2 text-muted">{{ product.price }}원</h6>
+                <p class="card-text">{{ product.description[:100] }}{% if product.description|length > 100 %}...{% endif %}</p>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">판매자: {{ product.seller_name }}</small>
+                    <a href="{{ url_for('view_product', product_id=product.id) }}" class="btn btn-primary btn-sm">자세히 보기</a>
+                </div>
+            </div>
+            <div class="card-footer text-muted">
+                <small>{{ product.created_at }}</small>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="col-12">
+        <div class="alert alert-info">
+            검색 결과가 없습니다.
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %} 
