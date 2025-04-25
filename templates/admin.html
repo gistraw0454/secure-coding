@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}관리자 페이지{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2 class="mb-4">관리자 페이지</h2>
+    
+    <!-- 사용자 관리 -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>사용자 관리</h4>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>아이디</th>
+                            <th>상태</th>
+                            <th>가입일</th>
+                            <th>마지막 로그인</th>
+                            <th>경고 횟수</th>
+                            <th>관리</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr>
+                            <td>{{ user.username }}</td>
+                            <td>
+                                <span class="badge {% if user.status == 'active' %}bg-success{% else %}bg-danger{% endif %}">
+                                    {{ user.status }}
+                                </span>
+                            </td>
+                            <td>{{ user.created_at }}</td>
+                            <td>{{ user.last_login or '로그인 기록 없음' }}</td>
+                            <td>{{ user.warning_count }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('update_user_status', user_id=user.id) }}" class="d-inline">
+                                    <input type="hidden" name="status" value="{% if user.status == 'active' %}suspended{% else %}active{% endif %}">
+                                    <button type="submit" class="btn btn-sm {% if user.status == 'active' %}btn-danger{% else %}btn-success{% endif %}">
+                                        {% if user.status == 'active' %}정지{% else %}해제{% endif %}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 상품 관리 -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>상품 관리</h4>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>상품명</th>
+                            <th>판매자</th>
+                            <th>가격</th>
+                            <th>상태</th>
+                            <th>신고 횟수</th>
+                            <th>관리</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td>{{ product.title }}</td>
+                            <td>{{ product.seller_name }}</td>
+                            <td>{{ product.price }}원</td>
+                            <td>
+                                <span class="badge {% if product.status == 'active' %}bg-success{% else %}bg-danger{% endif %}">
+                                    {{ product.status }}
+                                </span>
+                            </td>
+                            <td>{{ product.report_count }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('update_product_status', product_id=product.id) }}" class="d-inline">
+                                    <input type="hidden" name="status" value="{% if product.status == 'active' %}inactive{% else %}active{% endif %}">
+                                    <button type="submit" class="btn btn-sm {% if product.status == 'active' %}btn-danger{% else %}btn-success{% endif %}">
+                                        {% if product.status == 'active' %}비활성화{% else %}활성화{% endif %}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 신고 관리 -->
+    <div class="card">
+        <div class="card-header">
+            <h4>신고 관리</h4>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>신고자</th>
+                            <th>대상</th>
+                            <th>유형</th>
+                            <th>사유</th>
+                            <th>상태</th>
+                            <th>신고일</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for report in reports %}
+                        <tr>
+                            <td>{{ report.reporter_name }}</td>
+                            <td>{{ report.target_name }}</td>
+                            <td>{{ report.target_type }}</td>
+                            <td>{{ report.reason }}</td>
+                            <td>
+                                <span class="badge {% if report.status == 'pending' %}bg-warning{% else %}bg-success{% endif %}">
+                                    {{ report.status }}
+                                </span>
+                            </td>
+                            <td>{{ report.created_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

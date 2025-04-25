@@ -382,21 +382,85 @@ def report_user(user_id):
     return jsonify({'message': '신고가 접수되었습니다.'}), 200
 
 # 관리자용: 사용자 상태 관리
+@app.route('/admin')
+def admin_dashboard():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 사용자 목록 조회
+    cursor.execute("""
+        SELECT u.*, w.balance
+        FROM user u
+        LEFT JOIN wallet w ON u.id = w.user_id
+        ORDER BY u.created_at DESC
+    """)
+    users = cursor.fetchall()
+    
+    # 상품 목록 조회
+    cursor.execute("""
+        SELECT p.*, u.username as seller_name
+        FROM product p
+        JOIN user u ON p.seller_id = u.id
+        ORDER BY p.created_at DESC
+    """)
+    products = cursor.fetchall()
+    
+    # 신고 목록 조회
+    cursor.execute("""
+        SELECT r.*, 
+               ru.username as reporter_name,
+               CASE 
+                   WHEN r.target_type = 'user' THEN tu.username
+                   WHEN r.target_type = 'product' THEN tp.title
+               END as target_name
+        FROM report r
+        JOIN user ru ON r.reporter_id = ru.id
+        LEFT JOIN user tu ON r.target_type = 'user' AND r.target_id = tu.id
+        LEFT JOIN product tp ON r.target_type = 'product' AND r.target_id = tp.id
+        ORDER BY r.created_at DESC
+    """)
+    reports = cursor.fetchall()
+    
+    return render_template('admin.html', users=users, products=products, reports=reports)
+
 @app.route('/admin/user/<user_id>/status', methods=['POST'])
 def update_user_status(user_id):
     if 'user_id' not in session:
-        return jsonify({'error': '권한이 없습니다.'}), 401
+        return redirect(url_for('login'))
         
     new_status = request.form.get('status')
     if new_status not in ['active', 'suspended']:
-        return jsonify({'error': '잘못된 상태값입니다.'}), 400
+        flash('잘못된 상태값입니다.')
+        return redirect(url_for('admin_dashboard'))
         
     db = get_db()
     cursor = db.cursor()
     cursor.execute("UPDATE user SET status = ? WHERE id = ?", (new_status, user_id))
     db.commit()
     
-    return jsonify({'message': '사용자 상태가 업데이트되었습니다.'}), 200
+    flash('사용자 상태가 업데이트되었습니다.')
+    return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/product/<product_id>/status', methods=['POST'])
+def update_product_status(product_id):
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+        
+    new_status = request.form.get('status')
+    if new_status not in ['active', 'inactive']:
+        flash('잘못된 상태값입니다.')
+        return redirect(url_for('admin_dashboard'))
+        
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("UPDATE product SET status = ? WHERE id = ?", (new_status, product_id))
+    db.commit()
+    
+    flash('상품 상태가 업데이트되었습니다.')
+    return redirect(url_for('admin_dashboard'))
 
 # 상품 신고
 @app.route('/report_product/<product_id>', methods=['POST'])
@@ -562,23 +626,6 @@ def get_chat_messages(room_id):
     
     messages = cursor.fetchall()
     return jsonify({'messages': [dict(msg) for msg in messages]}), 200
-
-# 상품 상태 변경 (관리자용)
-@app.route('/admin/product/<product_id>/status', methods=['POST'])
-def update_product_status(product_id):
-    if 'user_id' not in session:
-        return jsonify({'error': '권한이 없습니다.'}), 401
-        
-    new_status = request.form.get('status')
-    if new_status not in ['active', 'inactive']:
-        return jsonify({'error': '잘못된 상태값입니다.'}), 400
-        
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("UPDATE product SET status = ? WHERE id = ?", (new_status, product_id))
-    db.commit()
-    
-    return jsonify({'message': '상품 상태가 업데이트되었습니다.'}), 200
 
 # 전체 채팅방 페이지
 @app.route('/chat/global')
