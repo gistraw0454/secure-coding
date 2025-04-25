@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}전체 채팅{% endblock %}
+
+{% block extra_css %}
+<style>
+    #global-messages {
+        height: 500px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background-color: #f8f9fa;
+    }
+    .message {
+        margin-bottom: 0.5rem;
+        padding: 0.5rem;
+        border-radius: 0.25rem;
+    }
+    .message.mine {
+        background-color: #007bff;
+        color: white;
+        margin-left: 20%;
+    }
+    .message.other {
+        background-color: white;
+        margin-right: 20%;
+        border: 1px solid #dee2e6;
+    }
+    .message .sender {
+        font-size: 0.8rem;
+        font-weight: bold;
+        margin-bottom: 0.2rem;
+    }
+    .message.mine .sender {
+        color: #e9ecef;
+    }
+    .message .time {
+        font-size: 0.7rem;
+        color: #6c757d;
+    }
+    .message.mine .time {
+        color: #e9ecef;
+    }
+    .online-users {
+        background-color: white;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+        padding: 1rem;
+    }
+    .chat-container {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="card mb-4">
+        <div class="card-body">
+            <h2 class="card-title mb-4">전체 채팅방</h2>
+            <div id="global-messages">
+                {% for message in messages %}
+                <div class="message {% if message.sender_id == session.user_id %}mine{% else %}other{% endif %}">
+                    <div class="sender">{{ message.sender_name }}</div>
+                    <div class="content">{{ message.message }}</div>
+                    <div class="time">{{ message.created_at }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            <form id="message-form" class="input-group">
+                <input type="text" id="message-input" class="form-control" placeholder="메시지를 입력하세요...">
+                <button type="submit" class="btn btn-primary">전송</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const socket = io();
+    const messages = document.getElementById('global-messages');
+    const messageForm = document.getElementById('message-form');
+    const messageInput = document.getElementById('message-input');
+
+    // 메시지 전송
+    messageForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const message = messageInput.value.trim();
+        if (message) {
+            socket.emit('global_message', {
+                message: message
+            });
+            messageInput.value = '';
+        }
+    });
+
+    // 새 메시지 수신
+    socket.on('global_message', (data) => {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${data.sender_id === '{{ session.user_id }}' ? 'mine' : 'other'}`;
+        messageDiv.innerHTML = `
+            <div class="sender">${data.sender_name}</div>
+            <div class="content">${data.message}</div>
+            <div class="time">${new Date(data.created_at).toLocaleString()}</div>
+        `;
+        messages.appendChild(messageDiv);
+        messages.scrollTop = messages.scrollHeight;
+    });
+
+    // 페이지 로드 시 스크롤을 맨 아래로
+    messages.scrollTop = messages.scrollHeight;
+</script>
+{% endblock %} 

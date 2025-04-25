@@ -25,7 +25,10 @@
                         <a class="nav-link" href="{{ url_for('new_product') }}">상품 등록</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('get_chat_rooms') }}">채팅</a>
+                        <a class="nav-link" href="{{ url_for('get_chat_rooms') }}">1:1 채팅</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('global_chat') }}">전체 채팅</a>
                     </li>
                     {% endif %}
                 </ul>
