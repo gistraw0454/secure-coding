@@ -20,94 +20,151 @@
 - Bootstrap 5
 - HTML/CSS/JavaScript
 
-## 환경 설정
+## 환경 구축 가이드
 
-1. Python 설치
-   - [Python 공식 웹사이트](https://www.python.org/downloads/)에서 Python 3.8 이상 버전을 다운로드하여 설치
+### 1. 기본 요구사항
 
-2. 가상환경 생성 및 활성화
+- Python 3.8 이상
+- pip (Python 패키지 관리자)
+- Git
+
+### 2. Python 설치
+1. [Python 공식 웹사이트](https://www.python.org/downloads/)에서 Python 3.8 이상 버전을 다운로드
+2. 설치 시 "Add Python to PATH" 옵션 체크
+3. 설치 완료 후 버전 확인:
    ```bash
-   # 가상환경 생성
-   python -m venv venv
+   python --version
+   ```
 
-   # 가상환경 활성화
+### 3. 프로젝트 클론 및 설정
+
+1. 프로젝트 클론:
+   ```bash
+   git clone [repository_url]
+   cd secure-coding
+   ```
+
+2. 가상환경 생성 및 활성화:
+   ```bash
    # Windows
+   python -m venv venv
    venv\Scripts\activate
+
    # macOS/Linux
+   python3 -m venv venv
    source venv/bin/activate
    ```
 
-3. 필요한 패키지 설치
+3. 필요한 패키지 설치:
    ```bash
+   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
-## 프로젝트 설정
+### 4. 데이터베이스 설정
 
-1. requirements.txt 생성
+데이터베이스는 애플리케이션 최초 실행 시 자동으로 생성됩니다.
+
+### 5. 환경 변수 설정
+
+1. 개발 환경 설정 (Windows):
    ```bash
-   pip freeze > requirements.txt
+   # CMD
+   set FLASK_ENV=development
+   set FLASK_DEBUG=1
+   set SECRET_KEY=your-secret-key-here
+
+   # PowerShell
+   $env:FLASK_ENV = "development"
+   $env:FLASK_DEBUG = "1"
+   $env:SECRET_KEY = "your-secret-key-here"
    ```
 
-2. 데이터베이스 초기화
-   - 애플리케이션 최초 실행 시 자동으로 데이터베이스가 생성됩니다.
-
-3. 환경 변수 설정
-   - `config.py` 파일에서 필요한 설정을 변경할 수 있습니다.
-   - 실제 운영 환경에서는 중요한 설정값을 환경 변수로 관리하는 것을 권장합니다.
-
-## 실행 방법
-
-1. 개발 서버 실행
+2. 개발 환경 설정 (macOS/Linux):
    ```bash
+   export FLASK_ENV=development
+   export FLASK_DEBUG=1
+   export SECRET_KEY=your-secret-key-here
+   ```
+
+### 6. SSL 인증서 설정 (선택사항)
+
+개발 환경에서 HTTPS를 사용하려면:
+
+1. 자체 서명 인증서 생성:
+   ```bash
+   # Windows (OpenSSL 필요)
+   openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
+
+   # macOS/Linux
+   openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
+   ```
+
+2. 생성된 인증서 파일을 프로젝트 루트 디렉토리에 복사
+
+### 7. 애플리케이션 실행
+
+1. 개발 서버 실행:
+   ```bash
+   # 기본 실행
    python app.py
+
+   # 특정 포트로 실행
+   python app.py --port 5000
    ```
 
-2. 웹 브라우저에서 접속
-   - 기본적으로 `https://localhost:443`으로 접속할 수 있습니다.
+2. 웹 브라우저에서 접속:
+   - HTTPS 사용 시: `https://localhost:443`
+   - HTTP 사용 시: `http://localhost:5000`
 
-## 보안 설정
+### 8. 문제 해결
 
-1. SSL 인증서 설정
-   - `app.py`의 `ssl_context` 설정에서 인증서 경로를 지정해야 합니다.
-   ```python
-   ssl_context = (
-       'path/to/cert.pem',  # SSL 인증서 경로
-       'path/to/key.pem'    # SSL 키 경로
-   )
+1. 포트 충돌 시:
+   ```bash
+   # Windows
+   netstat -ano | findstr :443
+   taskkill /PID [프로세스ID] /F
+
+   # macOS/Linux
+   lsof -i :443
+   kill -9 [프로세스ID]
    ```
 
-2. 비밀키 설정
-   - `app.py`의 `SECRET_KEY`를 환경 변수로 설정하는 것을 권장합니다.
-   ```python
-   app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+2. 패키지 설치 오류 시:
+   ```bash
+   pip install --upgrade pip setuptools wheel
+   pip install -r requirements.txt
    ```
 
-## 디렉토리 구조
+3. 데이터베이스 초기화:
+   ```bash
+   # 기존 데이터베이스 삭제
+   rm market.db
+   # 새로 실행하면 자동으로 생성됨
+   ```
 
-```
-secure-coding/
-├── app.py              # 메인 애플리케이션 파일
-├── config.py           # 설정 파일
-├── requirements.txt    # 의존성 패키지 목록
-├── market.db          # SQLite 데이터베이스
-└── templates/         # HTML 템플릿 파일들
-    ├── base.html
-    ├── index.html
-    ├── login.html
-    ├── register.html
-    └── ...
+## 개발 모드 vs 운영 모드
+
+### 개발 모드
+```bash
+# Windows
+set FLASK_ENV=development
+set FLASK_DEBUG=1
+
+# macOS/Linux
+export FLASK_ENV=development
+export FLASK_DEBUG=1
 ```
 
-## 의존성 패키지
+### 운영 모드
+```bash
+# Windows
+set FLASK_ENV=production
+set FLASK_DEBUG=0
 
-```
-Flask==2.0.1
-Flask-SocketIO==5.1.1
-Flask-WTF==0.15.1
-bcrypt==3.2.0
-Flask-Limiter==2.4.0
-python-socketio==5.4.0
+# macOS/Linux
+export FLASK_ENV=production
+export FLASK_DEBUG=0
 ```
 
 ## 주의사항
@@ -116,9 +173,13 @@ python-socketio==5.4.0
    - 강력한 비밀키 사용
    - SSL/TLS 인증서 설정
    - 환경 변수를 통한 중요 설정 관리
+   - 디버그 모드 비활성화
    - 적절한 로깅 설정
 
-2. 개발 모드에서는 디버그 모드를 활성화할 수 있지만, 운영 환경에서는 반드시 비활성화해야 합니다.
+2. 보안 설정:
+   - 모든 비밀키와 인증서는 안전하게 관리
+   - 환경 변수 사용
+   - 정기적인 업데이트 수행
 
 ## 라이선스
 

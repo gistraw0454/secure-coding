@@ -13,4 +13,4 @@ dnspython==2.1.0
 eventlet==0.33.0
 greenlet==1.1.0
 six==1.16.0
-limits==1.5.1 
+limits>=2.3 
