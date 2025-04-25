@@ -617,6 +617,96 @@ def handle_global_message(data):
         'created_at': datetime.now().isoformat()
     }, broadcast=True)
 
+# 상품 검색 기능
+@app.route('/search')
+def search_products():
+    # 검색 파라미터 받기
+    keyword = request.args.get('keyword', '').strip()
+    category = request.args.get('category')
+    min_price = request.args.get('min_price')
+    max_price = request.args.get('max_price')
+    seller = request.args.get('seller')
+    sort_by = request.args.get('sort', 'recent')  # recent, price_asc, price_desc
+    
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 기본 쿼리 구성
+    query = """
+        SELECT p.*, u.username as seller_name, u.warning_count as seller_warning_count
+        FROM product p
+        JOIN user u ON p.seller_id = u.id
+        WHERE 1=1
+    """
+    params = []
+    
+    # 키워드 검색 (제목, 설명)
+    if keyword:
+        query += """ AND (
+            p.title LIKE ? OR 
+            p.description LIKE ? OR
+            u.username LIKE ?
+        )"""
+        search_pattern = f"%{keyword}%"
+        params.extend([search_pattern, search_pattern, search_pattern])
+    
+    # 카테고리 필터
+    if category:
+        query += " AND p.category = ?"
+        params.append(category)
+    
+    # 가격 범위 필터
+    if min_price:
+        query += " AND CAST(REPLACE(p.price, ',', '') AS INTEGER) >= ?"
+        params.append(min_price)
+    if max_price:
+        query += " AND CAST(REPLACE(p.price, ',', '') AS INTEGER) <= ?"
+        params.append(max_price)
+    
+    # 판매자 필터
+    if seller:
+        query += " AND u.username LIKE ?"
+        params.append(f"%{seller}%")
+    
+    # 정렬 조건
+    if sort_by == 'price_asc':
+        query += " ORDER BY CAST(REPLACE(p.price, ',', '') AS INTEGER) ASC"
+    elif sort_by == 'price_desc':
+        query += " ORDER BY CAST(REPLACE(p.price, ',', '') AS INTEGER) DESC"
+    else:  # recent
+        query += " ORDER BY p.created_at DESC"
+    
+    cursor.execute(query, params)
+    products = cursor.fetchall()
+    
+    # 카테고리 목록 조회
+    cursor.execute("SELECT DISTINCT category FROM product WHERE category IS NOT NULL")
+    categories = [row['category'] for row in cursor.fetchall()]
+    
+    # 검색 결과 요약
+    total_count = len(products)
+    price_range = None
+    if products:
+        prices = [int(p['price'].replace(',', '')) for p in products]
+        price_range = {
+            'min': min(prices),
+            'max': max(prices)
+        }
+    
+    return render_template('search.html',
+                         products=products,
+                         categories=categories,
+                         total_count=total_count,
+                         price_range=price_range,
+                         search_params={
+                             'keyword': keyword,
+                             'category': category,
+                             'min_price': min_price,
+                             'max_price': max_price,
+                             'seller': seller,
+                             'sort_by': sort_by
+                         })
+
 if __name__ == '__main__':
     init_db()  # 앱 컨텍스트 내에서 테이블 생성
     socketio.run(app, debug=True)

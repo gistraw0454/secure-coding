@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}상품 검색{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <form method="get" action="{{ url_for('search_products') }}" class="row g-3">
+                    <!-- 검색어 입력 -->
+                    <div class="col-md-12">
+                        <div class="input-group">
+                            <input type="text" name="keyword" class="form-control" 
+                                   placeholder="검색어를 입력하세요 (상품명, 설명, 판매자)"
+                                   value="{{ search_params.keyword }}">
+                            <button type="submit" class="btn btn-primary">검색</button>
+                        </div>
+                    </div>
+
+                    <!-- 필터 영역 -->
+                    <div class="col-md-3">
+                        <label class="form-label">카테고리</label>
+                        <select name="category" class="form-select">
+                            <option value="">전체</option>
+                            {% for category in categories %}
+                            <option value="{{ category }}" {% if search_params.category == category %}selected{% endif %}>
+                                {{ category }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label">최소 가격</label>
+                        <input type="number" name="min_price" class="form-control" 
+                               value="{{ search_params.min_price }}" placeholder="최소 가격">
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label">최대 가격</label>
+                        <input type="number" name="max_price" class="form-control" 
+                               value="{{ search_params.max_price }}" placeholder="최대 가격">
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label">판매자</label>
+                        <input type="text" name="seller" class="form-control" 
+                               value="{{ search_params.seller }}" placeholder="판매자 이름">
+                    </div>
+
+                    <!-- 정렬 옵션 -->
+                    <div class="col-md-12">
+                        <div class="btn-group" role="group">
+                            <input type="radio" class="btn-check" name="sort" value="recent" 
+                                   id="sort1" {% if search_params.sort_by == 'recent' %}checked{% endif %}>
+                            <label class="btn btn-outline-primary" for="sort1">최신순</label>
+
+                            <input type="radio" class="btn-check" name="sort" value="price_asc" 
+                                   id="sort2" {% if search_params.sort_by == 'price_asc' %}checked{% endif %}>
+                            <label class="btn btn-outline-primary" for="sort2">가격 낮은순</label>
+
+                            <input type="radio" class="btn-check" name="sort" value="price_desc" 
+                                   id="sort3" {% if search_params.sort_by == 'price_desc' %}checked{% endif %}>
+                            <label class="btn btn-outline-primary" for="sort3">가격 높은순</label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 검색 결과 요약 -->
+<div class="row mb-3">
+    <div class="col-12">
+        <h4>검색 결과 ({{ total_count }}개)</h4>
+        {% if price_range %}
+        <p class="text-muted">
+            가격대: {{ "{:,}".format(price_range.min) }}원 ~ {{ "{:,}".format(price_range.max) }}원
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- 검색 결과 목록 -->
+<div class="row">
+    {% for product in products %}
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">{{ product.title }}</h5>
+                <h6 class="card-subtitle mb-2 text-muted">{{ product.price }}원</h6>
+                <p class="card-text">{{ product.description[:100] }}{% if product.description|length > 100 %}...{% endif %}</p>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        판매자: {{ product.seller_name }}
+                        {% if product.seller_warning_count > 0 %}
+                        <span class="badge bg-warning">경고 {{ product.seller_warning_count }}회</span>
+                        {% endif %}
+                    </small>
+                    <a href="{{ url_for('view_product', product_id=product.id) }}" class="btn btn-primary btn-sm">자세히 보기</a>
+                </div>
+            </div>
+            <div class="card-footer text-muted">
+                <small>{{ product.created_at }}</small>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="col-12">
+        <div class="alert alert-info">
+            검색 결과가 없습니다.
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// 정렬 옵션 변경 시 자동 submit
+document.querySelectorAll('input[name="sort"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+        radio.closest('form').submit();
+    });
+});
+</script>
+{% endblock %} 
