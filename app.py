@@ -1,13 +1,31 @@
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash, g, jsonify
 from flask_socketio import SocketIO, send, join_room, leave_room, emit
+import re
+import html
+import bcrypt
+from flask_wtf.csrf import CSRFProtect
+from functools import wraps
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
+app.config['SECRET_KEY'] = 'your-secret-key-here'  # 실제 운영 환경에서는 환경 변수로 관리
+app.config['SESSION_COOKIE_SECURE'] = True  # HTTPS에서만 쿠키 전송
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # JavaScript에서 쿠키 접근 불가
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF 방지
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)  # 세션 만료 시간 설정
 DATABASE = 'market.db'
 socketio = SocketIO(app)
+csrf = CSRFProtect(app)
+
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 # 데이터베이스 연결 관리: 요청마다 연결 생성 후 사용, 종료 시 close
 def get_db():
@@ -129,6 +147,20 @@ def init_db():
         """)
         db.commit()
 
+def validate_input(username, password):
+    # XSS 방지를 위한 특수문자 이스케이프
+    username = html.escape(username)
+    
+    # 아이디 검증: 알파벳, 숫자, 언더스코어만 허용 (4-20자)
+    if not re.match(r'^[a-zA-Z0-9_]{4,20}$', username):
+        return False, "아이디는 4-20자의 영문, 숫자, 언더스코어만 사용할 수 있습니다."
+    
+    # 비밀번호 검증: 최소 8자, 영문/숫자/특수문자 조합
+    if not re.match(r'^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$', password):
+        return False, "비밀번호는 8자 이상의 영문, 숫자, 특수문자 조합이어야 합니다."
+    
+    return True, None
+
 # 기본 라우트
 @app.route('/')
 def index():
@@ -138,51 +170,105 @@ def index():
 
 # 회원가입
 @app.route('/register', methods=['GET', 'POST'])
+@limiter.limit("3 per minute")
 def register():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        
+        # 입력값 검증
+        is_valid, error_message = validate_input(username, password)
+        if not is_valid:
+            flash(error_message)
+            return redirect(url_for('register'))
+        
         db = get_db()
         cursor = db.cursor()
+        
         # 중복 사용자 체크
         cursor.execute("SELECT * FROM user WHERE username = ?", (username,))
         if cursor.fetchone() is not None:
             flash('이미 존재하는 사용자명입니다.')
             return redirect(url_for('register'))
+            
+        # bcrypt를 사용한 비밀번호 해싱
+        salt = bcrypt.gensalt()
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt)
+        
         user_id = str(uuid.uuid4())
-        cursor.execute("INSERT INTO user (id, username, password) VALUES (?, ?, ?)",
-                       (user_id, username, password))
+        cursor.execute(
+            "INSERT INTO user (id, username, password) VALUES (?, ?, ?)",
+            (user_id, username, hashed_password)
+        )
+        
         # 지갑 생성 (초기 잔액 10000원)
-        cursor.execute("INSERT INTO wallet (user_id, balance) VALUES (?, ?)",
-                       (user_id, 10000))
+        cursor.execute(
+            "INSERT INTO wallet (user_id, balance) VALUES (?, ?)",
+            (user_id, 10000)
+        )
+        
         db.commit()
         flash('회원가입이 완료되었습니다. 로그인 해주세요.')
         return redirect(url_for('login'))
+        
     return render_template('register.html')
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # 세션 존재 여부 확인
+        if 'user_id' not in session:
+            flash('로그인이 필요합니다.')
+            return redirect(url_for('login'))
+        
+        # 세션 만료 시간 확인
+        if 'last_activity' in session:
+            inactive_time = datetime.now() - datetime.fromisoformat(session['last_activity'])
+            if inactive_time > timedelta(minutes=30):
+                session.clear()
+                flash('세션이 만료되었습니다. 다시 로그인해주세요.')
+                return redirect(url_for('login'))
+        
+        # 마지막 활동 시간 업데이트
+        session['last_activity'] = datetime.now().isoformat()
+        return f(*args, **kwargs)
+    return decorated_function
 
 # 로그인
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
 def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        
         db = get_db()
         cursor = db.cursor()
-        cursor.execute("SELECT * FROM user WHERE username = ? AND password = ?", (username, password))
+        cursor.execute("SELECT * FROM user WHERE username = ?", (username,))
         user = cursor.fetchone()
-        if user:
+        
+        if user and bcrypt.checkpw(password.encode('utf-8'), user['password']):
             if user['status'] == 'suspended':
                 flash('계정이 정지되었습니다. 관리자에게 문의하세요.')
                 return redirect(url_for('login'))
+                
             session['user_id'] = user['id']
+            session['last_activity'] = datetime.now().isoformat()
+            session.permanent = True  # 세션 만료 시간 활성화
+            
             # 마지막 로그인 시간 업데이트
-            cursor.execute("UPDATE user SET last_login = CURRENT_TIMESTAMP WHERE id = ?", (user['id'],))
+            cursor.execute(
+                "UPDATE user SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
+                (user['id'],)
+            )
             db.commit()
+            
             flash('로그인 성공!')
             return redirect(url_for('dashboard'))
         else:
             flash('아이디 또는 비밀번호가 올바르지 않습니다.')
             return redirect(url_for('login'))
+            
     return render_template('login.html')
 
 # 로그아웃
@@ -207,15 +293,29 @@ def dashboard():
     all_products = cursor.fetchall()
     return render_template('dashboard.html', products=all_products, user=current_user)
 
+def sanitize_input(text):
+    if text is None:
+        return None
+    return html.escape(str(text))
+
+@app.template_filter('safe_markdown')
+def safe_markdown(text):
+    if text is None:
+        return ''
+    # HTML 태그 이스케이프
+    text = html.escape(str(text))
+    # 줄바꿈만 허용
+    text = text.replace('\n', '<br>')
+    return text
+
 # 프로필 페이지: bio 업데이트 가능
 @app.route('/profile', methods=['GET', 'POST'])
+@login_required
 def profile():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    db = get_db()
-    cursor = db.cursor()
     if request.method == 'POST':
-        bio = request.form.get('bio', '')
+        bio = sanitize_input(request.form.get('bio', ''))
+        db = get_db()
+        cursor = db.cursor()
         cursor.execute("UPDATE user SET bio = ? WHERE id = ?", (bio, session['user_id']))
         db.commit()
         flash('프로필이 업데이트되었습니다.')
@@ -226,14 +326,13 @@ def profile():
 
 # 상품 등록
 @app.route('/product/new', methods=['GET', 'POST'])
+@login_required
 def new_product():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
     if request.method == 'POST':
-        title = request.form['title']
-        description = request.form['description']
+        title = sanitize_input(request.form['title'])
+        description = sanitize_input(request.form['description'])
         price = request.form['price']
-        category = request.form.get('category', '')
+        category = sanitize_input(request.form.get('category', ''))
         
         db = get_db()
         cursor = db.cursor()
@@ -813,15 +912,43 @@ def view_wallet():
     
     return render_template('wallet.html', wallet=wallet, transactions=transactions)
 
-# 송금 기능
+def validate_transaction(sender_id, receiver_id, amount):
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 송신자 지갑 확인
+    cursor.execute("SELECT balance FROM wallet WHERE user_id = ?", (sender_id,))
+    sender_wallet = cursor.fetchone()
+    if not sender_wallet:
+        return False, "송신자의 지갑을 찾을 수 없습니다."
+    
+    # 수신자 지갑 확인
+    cursor.execute("SELECT id FROM wallet WHERE user_id = ?", (receiver_id,))
+    if not cursor.fetchone():
+        return False, "수신자의 지갑을 찾을 수 없습니다."
+    
+    # 잔액 검증
+    if sender_wallet['balance'] < amount:
+        return False, "잔액이 부족합니다."
+    
+    # 금액 검증
+    if amount <= 0:
+        return False, "송금액은 0보다 커야 합니다."
+    
+    return True, None
+
 @app.route('/transfer', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
+@login_required
 def transfer_money():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-        
     if request.method == 'POST':
         receiver_username = request.form['receiver_username']
-        amount = int(request.form['amount'])
+        try:
+            amount = int(request.form['amount'])
+        except ValueError:
+            flash('올바른 금액을 입력해주세요.')
+            return redirect(url_for('transfer_money'))
+            
         description = request.form.get('description', '')
         
         db = get_db()
@@ -833,25 +960,30 @@ def transfer_money():
         if not receiver:
             flash('존재하지 않는 사용자입니다.')
             return redirect(url_for('transfer_money'))
-            
-        # 잔액 확인
-        cursor.execute("SELECT balance FROM wallet WHERE user_id = ?", (session['user_id'],))
-        sender_balance = cursor.fetchone()['balance']
         
-        if sender_balance < amount:
-            flash('잔액이 부족합니다.')
+        # 거래 유효성 검증
+        is_valid, error_message = validate_transaction(session['user_id'], receiver['id'], amount)
+        if not is_valid:
+            flash(error_message)
             return redirect(url_for('transfer_money'))
-            
+        
         # 거래 처리
         transaction_id = str(uuid.uuid4())
         try:
+            cursor.execute("BEGIN TRANSACTION")
+            
             # 송신자 잔액 감소
             cursor.execute("""
                 UPDATE wallet 
                 SET balance = balance - ?,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-            """, (amount, session['user_id']))
+                WHERE user_id = ? AND balance >= ?
+            """, (amount, session['user_id'], amount))
+            
+            if cursor.rowcount == 0:
+                cursor.execute("ROLLBACK")
+                flash('잔액이 부족합니다.')
+                return redirect(url_for('transfer_money'))
             
             # 수신자 잔액 증가
             cursor.execute("""
@@ -867,15 +999,16 @@ def transfer_money():
                 VALUES (?, ?, ?, ?, ?)
             """, (transaction_id, session['user_id'], receiver['id'], amount, description))
             
-            db.commit()
+            cursor.execute("COMMIT")
             flash('송금이 완료되었습니다.')
             return redirect(url_for('view_wallet'))
             
         except Exception as e:
-            db.rollback()
+            cursor.execute("ROLLBACK")
+            app.logger.error(f"Transaction error: {str(e)}")
             flash('송금 처리 중 오류가 발생했습니다.')
             return redirect(url_for('transfer_money'))
-            
+    
     # GET 요청: 송금 폼 표시
     db = get_db()
     cursor = db.cursor()
@@ -884,6 +1017,36 @@ def transfer_money():
     
     return render_template('transfer.html', wallet=wallet)
 
+def handle_error(error_message):
+    # 오류 메시지에서 민감한 정보 제거
+    safe_message = error_message.replace(DATABASE, '***')
+    safe_message = re.sub(r'at 0x[0-9a-fA-F]+', 'at ***', safe_message)
+    return safe_message
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('error.html', error='요청하신 페이지를 찾을 수 없습니다.'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    db = get_db()
+    db.rollback()
+    return render_template('error.html', error='서버 오류가 발생했습니다.'), 500
+
+@app.route('/error')
+def error():
+    return render_template('error.html')
+
 if __name__ == '__main__':
-    init_db()  # 앱 컨텍스트 내에서 테이블 생성
-    socketio.run(app, debug=True)
+    init_db()
+    ssl_context = (
+        'path/to/cert.pem',  # SSL 인증서 경로
+        'path/to/key.pem'    # SSL 키 경로
+    )
+    socketio.run(
+        app,
+        debug=True,
+        ssl_context=ssl_context,
+        host='0.0.0.0',
+        port=443
+    )
