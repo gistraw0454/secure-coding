@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}내 지갑{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- 지갑 정보 -->
+    <div class="col-md-4 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">{{ wallet.username }}님의 지갑</h5>
+                <h2 class="card-text text-primary">{{ "{:,}".format(wallet.balance) }}원</h2>
+                <p class="text-muted small">마지막 업데이트: {{ wallet.updated_at }}</p>
+                <a href="{{ url_for('transfer_money') }}" class="btn btn-primary">송금하기</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 거래 내역 -->
+    <div class="col-md-8">
+        <h4>최근 거래 내역</h4>
+        <div class="list-group">
+            {% for tx in transactions %}
+            <div class="list-group-item">
+                <div class="d-flex w-100 justify-content-between">
+                    <h6 class="mb-1">
+                        {% if tx.sender_id == session.user_id %}
+                            <span class="text-danger">-{{ "{:,}".format(tx.amount) }}원</span>
+                            <small class="text-muted">→ {{ tx.receiver_name }}</small>
+                        {% else %}
+                            <span class="text-success">+{{ "{:,}".format(tx.amount) }}원</span>
+                            <small class="text-muted">← {{ tx.sender_name }}</small>
+                        {% endif %}
+                    </h6>
+                    <small>{{ tx.created_at }}</small>
+                </div>
+                {% if tx.description %}
+                <small class="text-muted">{{ tx.description }}</small>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="text-center text-muted p-3">
+                거래 내역이 없습니다.
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %} 

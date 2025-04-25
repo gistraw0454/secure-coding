@@ -105,6 +105,28 @@ def init_db():
                 FOREIGN KEY (sender_id) REFERENCES user (id)
             )
         """)
+        # 지갑 테이블 추가
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wallet (
+                user_id TEXT PRIMARY KEY,
+                balance INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES user (id)
+            )
+        """)
+        # 거래 내역 테이블 추가
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transaction (
+                id TEXT PRIMARY KEY,
+                sender_id TEXT NOT NULL,
+                receiver_id TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                description TEXT,
+                FOREIGN KEY (sender_id) REFERENCES user (id),
+                FOREIGN KEY (receiver_id) REFERENCES user (id)
+            )
+        """)
         db.commit()
 
 # 기본 라우트
@@ -130,6 +152,9 @@ def register():
         user_id = str(uuid.uuid4())
         cursor.execute("INSERT INTO user (id, username, password) VALUES (?, ?, ?)",
                        (user_id, username, password))
+        # 지갑 생성 (초기 잔액 10000원)
+        cursor.execute("INSERT INTO wallet (user_id, balance) VALUES (?, ?)",
+                       (user_id, 10000))
         db.commit()
         flash('회원가입이 완료되었습니다. 로그인 해주세요.')
         return redirect(url_for('login'))
@@ -706,6 +731,106 @@ def search_products():
                              'seller': seller,
                              'sort_by': sort_by
                          })
+
+# 내 지갑 조회
+@app.route('/wallet')
+def view_wallet():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+        
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 지갑 정보 조회
+    cursor.execute("""
+        SELECT w.*, u.username 
+        FROM wallet w 
+        JOIN user u ON w.user_id = u.id 
+        WHERE w.user_id = ?
+    """, (session['user_id'],))
+    wallet = cursor.fetchone()
+    
+    # 거래 내역 조회
+    cursor.execute("""
+        SELECT t.*, 
+               s.username as sender_name,
+               r.username as receiver_name
+        FROM transaction t
+        JOIN user s ON t.sender_id = s.id
+        JOIN user r ON t.receiver_id = r.id
+        WHERE t.sender_id = ? OR t.receiver_id = ?
+        ORDER BY t.created_at DESC
+        LIMIT 10
+    """, (session['user_id'], session['user_id']))
+    transactions = cursor.fetchall()
+    
+    return render_template('wallet.html', wallet=wallet, transactions=transactions)
+
+# 송금 기능
+@app.route('/transfer', methods=['GET', 'POST'])
+def transfer_money():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+        
+    if request.method == 'POST':
+        receiver_username = request.form['receiver']
+        amount = int(request.form['amount'])
+        description = request.form.get('description', '')
+        
+        db = get_db()
+        cursor = db.cursor()
+        
+        # 수신자 확인
+        cursor.execute("SELECT id FROM user WHERE username = ?", (receiver_username,))
+        receiver = cursor.fetchone()
+        if not receiver:
+            flash('존재하지 않는 사용자입니다.')
+            return redirect(url_for('transfer_money'))
+            
+        # 잔액 확인
+        cursor.execute("SELECT balance FROM wallet WHERE user_id = ?", (session['user_id'],))
+        sender_balance = cursor.fetchone()['balance']
+        
+        if sender_balance < amount:
+            flash('잔액이 부족합니다.')
+            return redirect(url_for('transfer_money'))
+            
+        # 거래 처리
+        transaction_id = str(uuid.uuid4())
+        try:
+            # 송신자 잔액 감소
+            cursor.execute("""
+                UPDATE wallet 
+                SET balance = balance - ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+            """, (amount, session['user_id']))
+            
+            # 수신자 잔액 증가
+            cursor.execute("""
+                UPDATE wallet 
+                SET balance = balance + ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+            """, (amount, receiver['id']))
+            
+            # 거래 내역 저장
+            cursor.execute("""
+                INSERT INTO transaction (id, sender_id, receiver_id, amount, description)
+                VALUES (?, ?, ?, ?, ?)
+            """, (transaction_id, session['user_id'], receiver['id'], amount, description))
+            
+            db.commit()
+            flash('송금이 완료되었습니다.')
+            return redirect(url_for('view_wallet'))
+            
+        except Exception as e:
+            db.rollback()
+            flash('송금 처리 중 오류가 발생했습니다.')
+            return redirect(url_for('transfer_money'))
+            
+    # GET 요청: 송금 폼 표시
+    return render_template('transfer.html')
 
 if __name__ == '__main__':
     init_db()  # 앱 컨텍스트 내에서 테이블 생성
