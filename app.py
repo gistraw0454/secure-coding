@@ -1076,7 +1076,7 @@ def validate_transaction(sender_id, receiver_id, amount):
         return False, "송신자의 지갑을 찾을 수 없습니다."
     
     # 수신자 지갑 확인
-    cursor.execute("SELECT id FROM wallet WHERE user_id = ?", (receiver_id,))
+    cursor.execute("SELECT user_id FROM wallet WHERE user_id = ?", (receiver_id,))
     if not cursor.fetchone():
         return False, "수신자의 지갑을 찾을 수 없습니다."
     
@@ -1112,6 +1112,11 @@ def transfer_money():
         receiver = cursor.fetchone()
         if not receiver:
             flash('존재하지 않는 사용자입니다.')
+            return redirect(url_for('transfer_money'))
+        
+        # 자기 자신에게 송금하는 것을 방지
+        if receiver['id'] == session['user_id']:
+            flash('자기 자신에게는 송금할 수 없습니다.')
             return redirect(url_for('transfer_money'))
         
         # 거래 유효성 검증
