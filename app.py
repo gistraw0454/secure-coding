@@ -303,6 +303,25 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            flash('로그인이 필요합니다.')
+            return redirect(url_for('login'))
+            
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute("SELECT role FROM user WHERE id = ?", (session['user_id'],))
+        user = cursor.fetchone()
+        
+        if not user or user['role'] != 'admin':
+            flash('관리자 권한이 필요합니다.')
+            return redirect(url_for('dashboard'))
+            
+        return f(*args, **kwargs)
+    return decorated_function
+
 # 로그인
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
@@ -395,22 +414,137 @@ def safe_markdown(text):
     return text
 
 # 프로필 페이지: bio 업데이트 가능
-@app.route('/profile', methods=['GET', 'POST'])
+@app.route('/profile', methods=['GET'])
 @login_required
 def profile():
     db = get_db()
     cursor = db.cursor()
     
-    if request.method == 'POST':
-        bio = sanitize_input(request.form.get('bio', ''))
-        cursor.execute("UPDATE user SET bio = ? WHERE id = ?", (bio, session['user_id']))
+    # 사용자 정보 조회
+    cursor.execute("SELECT * FROM user WHERE id = ?", (session['user_id'],))
+    user = cursor.fetchone()
+    
+    # 사용자의 상품 목록 조회
+    cursor.execute("""
+        SELECT * FROM product 
+        WHERE seller_id = ? 
+        ORDER BY created_at DESC
+    """, (session['user_id'],))
+    products = cursor.fetchall()
+    
+    return render_template('profile.html', user=user, products=products)
+
+@app.route('/profile/update', methods=['POST'])
+@login_required
+def update_profile():
+    bio = sanitize_input(request.form.get('bio', '').strip())
+    
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            "UPDATE user SET bio = ? WHERE id = ?",
+            (bio, session['user_id'])
+        )
         db.commit()
-        flash('프로필이 업데이트되었습니다.')
+        flash('프로필이 업데이트되었습니다.', 'success')
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f'프로필 업데이트 중 오류 발생: {str(e)}')
+        flash('프로필 업데이트 중 오류가 발생했습니다.', 'error')
+    
+    return redirect(url_for('profile'))
+
+@app.route('/profile/password', methods=['POST'])
+@login_required
+def update_password():
+    current_password = request.form.get('current_password')
+    new_password = request.form.get('new_password')
+    confirm_password = request.form.get('confirm_password')
+    
+    if not all([current_password, new_password, confirm_password]):
+        flash('모든 필드를 입력해주세요.', 'error')
         return redirect(url_for('profile'))
     
-    cursor.execute("SELECT * FROM user WHERE id = ?", (session['user_id'],))
-    current_user = cursor.fetchone()
-    return render_template('profile.html', user=current_user)
+    if new_password != confirm_password:
+        flash('새 비밀번호가 일치하지 않습니다.', 'error')
+        return redirect(url_for('profile'))
+    
+    # 비밀번호 복잡도 검증
+    if not re.match(r'^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$', new_password):
+        flash('비밀번호는 8자 이상의 영문, 숫자, 특수문자 조합이어야 합니다.', 'error')
+        return redirect(url_for('profile'))
+    
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # 현재 비밀번호 확인
+        cursor.execute("SELECT password FROM user WHERE id = ?", (session['user_id'],))
+        user = cursor.fetchone()
+        
+        if not bcrypt.checkpw(current_password.encode('utf-8'), user['password']):
+            flash('현재 비밀번호가 올바르지 않습니다.', 'error')
+            return redirect(url_for('profile'))
+        
+        # 새 비밀번호 해시화 및 업데이트
+        salt = bcrypt.gensalt()
+        hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), salt)
+        
+        cursor.execute(
+            "UPDATE user SET password = ? WHERE id = ?",
+            (hashed_password, session['user_id'])
+        )
+        db.commit()
+        flash('비밀번호가 변경되었습니다.', 'success')
+        
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f'비밀번호 변경 중 오류 발생: {str(e)}')
+        flash('비밀번호 변경 중 오류가 발생했습니다.', 'error')
+    
+    return redirect(url_for('profile'))
+
+@app.route('/product/<product_id>/toggle', methods=['POST'])
+@login_required
+def toggle_product_status(product_id):
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # 상품 소유자 확인
+        cursor.execute("""
+            SELECT status, seller_id 
+            FROM product 
+            WHERE id = ?
+        """, (product_id,))
+        product = cursor.fetchone()
+        
+        if not product:
+            flash('상품을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('profile'))
+        
+        if product['seller_id'] != session['user_id']:
+            flash('권한이 없습니다.', 'error')
+            return redirect(url_for('profile'))
+        
+        # 상태 토글
+        new_status = 'inactive' if product['status'] == 'active' else 'active'
+        cursor.execute(
+            "UPDATE product SET status = ? WHERE id = ?",
+            (new_status, product_id)
+        )
+        
+        db.commit()
+        status_str = '판매중지' if new_status == 'inactive' else '판매시작'
+        flash(f'상품이 {status_str}되었습니다.', 'success')
+        
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f'상품 상태 변경 중 오류 발생: {str(e)}')
+        flash('상태 변경 중 오류가 발생했습니다.', 'error')
+    
+    return redirect(url_for('profile'))
 
 # 상품 등록
 @app.route('/product/new', methods=['GET', 'POST'])
@@ -1359,15 +1493,6 @@ def is_admin():
     user = cursor.fetchone()
     return user and user['role'] == 'admin'
 
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not is_admin():
-            flash('관리자 권한이 필요합니다.')
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
-
 @app.route('/admin/create', methods=['GET', 'POST'])
 def create_admin():
     if request.method == 'POST':
@@ -1420,6 +1545,75 @@ def create_admin():
             return redirect(url_for('create_admin'))
 
     return render_template('create_admin.html')
+
+# 상품 수정
+@app.route('/product/<product_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_product(product_id):
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 상품 정보 조회
+    cursor.execute("""
+        SELECT * FROM product 
+        WHERE id = ? AND seller_id = ?
+    """, (product_id, session['user_id']))
+    product = cursor.fetchone()
+    
+    if not product:
+        flash('상품을 찾을 수 없거나 수정 권한이 없습니다.', 'error')
+        return redirect(url_for('profile'))
+    
+    if request.method == 'POST':
+        title = sanitize_input(request.form.get('title', '').strip())
+        description = sanitize_input(request.form.get('description', '').strip())
+        price = request.form.get('price', '').strip()
+        category = request.form.get('category', '').strip()
+        
+        # 입력값 검증
+        if not all([title, description, price, category]):
+            flash('모든 필드를 입력해주세요.', 'error')
+            return redirect(url_for('edit_product', product_id=product_id))
+        
+        # 가격 유효성 검사
+        try:
+            price_value = int(price)
+            if price_value < 0:
+                flash('가격은 0 이상이어야 합니다.', 'error')
+                return redirect(url_for('edit_product', product_id=product_id))
+        except ValueError:
+            flash('올바른 가격을 입력해주세요.', 'error')
+            return redirect(url_for('edit_product', product_id=product_id))
+        
+        # XSS 방지를 위한 추가 검증
+        if len(title) > 100 or len(description) > 1000:
+            flash('제목 또는 설명이 너무 깁니다.', 'error')
+            return redirect(url_for('edit_product', product_id=product_id))
+        
+        # 허용된 카테고리 검증
+        allowed_categories = ['전자기기', '의류', '도서', '생활용품', '기타']
+        if category not in allowed_categories:
+            flash('올바른 카테고리를 선택해주세요.', 'error')
+            return redirect(url_for('edit_product', product_id=product_id))
+        
+        try:
+            cursor.execute("""
+                UPDATE product 
+                SET title = ?, description = ?, price = ?, category = ?
+                WHERE id = ? AND seller_id = ?
+            """, (title, description, price, category, product_id, session['user_id']))
+            
+            db.commit()
+            flash('상품이 수정되었습니다.', 'success')
+            return redirect(url_for('view_product', product_id=product_id))
+            
+        except Exception as e:
+            db.rollback()
+            app.logger.error(f'상품 수정 중 오류 발생: {str(e)}')
+            flash('상품 수정 중 오류가 발생했습니다.', 'error')
+            return redirect(url_for('edit_product', product_id=product_id))
+    
+    return render_template('product/edit.html', product=product)
 
 if __name__ == '__main__':
     init_db()

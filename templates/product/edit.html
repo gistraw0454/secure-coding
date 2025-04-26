@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}상품 수정{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h3>상품 수정</h3>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('edit_product', product_id=product.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        
+                        <div class="mb-3">
+                            <label for="title" class="form-label">상품명</label>
+                            <input type="text" class="form-control" id="title" name="title" value="{{ product.title }}" required maxlength="100">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="description" class="form-label">상품 설명</label>
+                            <textarea class="form-control" id="description" name="description" rows="5" required maxlength="1000">{{ product.description }}</textarea>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="price" class="form-label">가격</label>
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="price" name="price" value="{{ product.price }}" required min="0">
+                                <span class="input-group-text">원</span>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="category" class="form-label">카테고리</label>
+                            <select class="form-select" id="category" name="category" required>
+                                <option value="">카테고리 선택</option>
+                                <option value="전자기기" {% if product.category == '전자기기' %}selected{% endif %}>전자기기</option>
+                                <option value="의류" {% if product.category == '의류' %}selected{% endif %}>의류</option>
+                                <option value="도서" {% if product.category == '도서' %}selected{% endif %}>도서</option>
+                                <option value="생활용품" {% if product.category == '생활용품' %}selected{% endif %}>생활용품</option>
+                                <option value="기타" {% if product.category == '기타' %}selected{% endif %}>기타</option>
+                            </select>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between">
+                            <button type="submit" class="btn btn-primary">수정 완료</button>
+                            <a href="{{ url_for('profile') }}" class="btn btn-secondary">취소</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 
