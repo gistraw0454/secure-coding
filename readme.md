@@ -2,6 +2,48 @@
 
 안전하고 신뢰할 수 있는 중고거래 경험을 제공하는 웹 플랫폼입니다.
 
+## 시작하기
+
+### 시스템 요구사항
+- Python 3.8 이상
+- SQLite3
+- Git
+
+### 설치 방법
+1. 저장소 클론
+   ```bash
+   git clone [repository-url]
+   cd secure-coding
+   ```
+
+2. 가상환경 생성 및 활성화
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   venv\Scripts\activate     # Windows
+   ```
+
+3. 패키지 설치
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### 실행 방법
+1. 데이터베이스 초기화
+   ```bash
+   python init_db.py
+   ```
+
+2. 서버 실행
+   ```bash
+   python app.py
+   ```
+
+3. 웹 브라우저에서 접속
+   ```
+   http://localhost:5000
+   ```
+
 ## 주요 기능
 
 ### 🔒 보안 기능
@@ -138,47 +180,6 @@
   - 자신의 상품 신고 불가
   - 24시간 내 동일 상품 신고 불가
 
-## 시작하기
-
-### 시스템 요구사항
-- Python 3.8 이상
-- SQLite3
-- Git
-
-### 설치 방법
-1. 저장소 클론
-   ```bash
-   git clone [repository-url]
-   cd secure-coding
-   ```
-
-2. 가상환경 생성 및 활성화
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Linux/Mac
-   venv\Scripts\activate     # Windows
-   ```
-
-3. 패키지 설치
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-### 실행 방법
-1. 데이터베이스 초기화
-   ```bash
-   python init_db.py
-   ```
-
-2. 서버 실행
-   ```bash
-   python app.py
-   ```
-
-3. 웹 브라우저에서 접속
-   ```
-   http://localhost:5000
-   ```
 
 ## 데이터베이스 구조
 
