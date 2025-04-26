@@ -3,43 +3,72 @@
 {% block title %}송금하기{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-body">
-                <h4 class="card-title mb-4">송금하기</h4>
-                
-                <!-- 현재 잔액 표시 -->
-                <div class="alert alert-info">
-                    현재 잔액: <strong>{{ "{:,}".format(wallet.balance) }}원</strong>
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="text-center mb-0">송금하기</h2>
                 </div>
-
-                <form method="POST">
-                    <div class="mb-3">
-                        <label for="receiver_username" class="form-label">받는 사람 아이디</label>
-                        <input type="text" class="form-control" id="receiver_username" name="receiver_username" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="amount" class="form-label">송금액</label>
-                        <div class="input-group">
-                            <input type="number" class="form-control" id="amount" name="amount" min="1" max="{{ wallet.balance }}" required>
-                            <span class="input-group-text">원</span>
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label for="current_balance" class="form-label">현재 잔액</label>
+                            <input type="text" class="form-control" id="current_balance" value="{{ wallet.balance }}원" readonly>
                         </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="description" class="form-label">설명 (선택사항)</label>
-                        <input type="text" class="form-control" id="description" name="description" maxlength="100">
-                    </div>
-
-                    <div class="d-grid gap-2">
-                        <button type="submit" class="btn btn-primary">송금하기</button>
-                        <a href="{{ url_for('wallet') }}" class="btn btn-outline-secondary">취소</a>
-                    </div>
-                </form>
+                        <div class="mb-3">
+                            <label for="receiver_username" class="form-label">받는 사람 (사용자명)</label>
+                            <input type="text" class="form-control" id="receiver_username" name="receiver_username" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="amount" class="form-label">송금액</label>
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="amount" name="amount" required min="0">
+                                <span class="input-group-text">원</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="description" class="form-label">설명 (선택사항)</label>
+                            <input type="text" class="form-control" id="description" name="description" maxlength="100">
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">송금하기</button>
+                            <a href="{{ url_for('view_wallet') }}" class="btn btn-outline-secondary">취소</a>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    const amount = document.getElementById('amount');
+    const currentBalance = parseInt(document.getElementById('current_balance').value);
+
+    form.addEventListener('submit', function(e) {
+        if (!amount.value.trim()) {
+            e.preventDefault();
+            alert('송금액을 입력해주세요.');
+            return;
+        }
+
+        const amountValue = parseInt(amount.value);
+        if (amountValue <= 0) {
+            e.preventDefault();
+            alert('송금액은 0보다 커야 합니다.');
+            return;
+        }
+
+        if (amountValue > currentBalance) {
+            e.preventDefault();
+            alert('잔액이 부족합니다.');
+            return;
+        }
+    });
+});
+</script>
 {% endblock %} 
