@@ -30,6 +30,17 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"]
 )
 
+# 읽기 전용 작업에 대한 데코레이터
+def readonly_operation(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        g._database = get_readonly_db()
+        try:
+            return f(*args, **kwargs)
+        finally:
+            g._database = None
+    return decorated_function
+
 # 데이터베이스 연결 관리: 요청마다 연결 생성 후 사용, 종료 시 close
 def get_db():
     db = getattr(g, '_database', None)
@@ -166,7 +177,7 @@ def init_db():
         """)
         # 거래 내역 테이블 추가
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transaction (
+            CREATE TABLE IF NOT EXISTS money_transaction (
                 id TEXT PRIMARY KEY,
                 sender_id TEXT NOT NULL,
                 receiver_id TEXT NOT NULL,
@@ -372,14 +383,16 @@ def safe_markdown(text):
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
+    db = get_db()
+    cursor = db.cursor()
+    
     if request.method == 'POST':
         bio = sanitize_input(request.form.get('bio', ''))
-        db = get_db()
-        cursor = db.cursor()
         cursor.execute("UPDATE user SET bio = ? WHERE id = ?", (bio, session['user_id']))
         db.commit()
         flash('프로필이 업데이트되었습니다.')
         return redirect(url_for('profile'))
+    
     cursor.execute("SELECT * FROM user WHERE id = ?", (session['user_id'],))
     current_user = cursor.fetchone()
     return render_template('profile.html', user=current_user)
@@ -1017,7 +1030,7 @@ def view_wallet():
         SELECT t.*, 
                s.username as sender_name,
                r.username as receiver_name
-        FROM transaction t
+        FROM money_transaction t
         JOIN user s ON t.sender_id = s.id
         JOIN user r ON t.receiver_id = r.id
         WHERE t.sender_id = ? OR t.receiver_id = ?
@@ -1111,7 +1124,7 @@ def transfer_money():
             
             # 거래 내역 저장
             cursor.execute("""
-                INSERT INTO transaction (id, sender_id, receiver_id, amount, description)
+                INSERT INTO money_transaction (id, sender_id, receiver_id, amount, description)
                 VALUES (?, ?, ?, ?, ?)
             """, (transaction_id, session['user_id'], receiver['id'], amount, description))
             
@@ -1182,27 +1195,6 @@ def add_login_attempt(username, ip_address, success):
     
     db.commit()
 
-# 읽기 전용 작업에 대한 데코레이터
-def readonly_operation(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        g._database = get_readonly_db()
-        try:
-            return f(*args, **kwargs)
-        finally:
-            g._database = None
-    return decorated_function
-
 if __name__ == '__main__':
     init_db()
-    ssl_context = (
-        'path/to/cert.pem',  # SSL 인증서 경로
-        'path/to/key.pem'    # SSL 키 경로
-    )
-    socketio.run(
-        app,
-        debug=True,
-        ssl_context=ssl_context,
-        host='0.0.0.0',
-        port=443
-    )
+    socketio.run(app, debug=True, port=5000)
