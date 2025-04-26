@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from app import init_db, app
 
 def init_db():
     # 기존 데이터베이스 파일이 있다면 삭제
@@ -139,4 +140,6 @@ def init_db():
     print("데이터베이스가 성공적으로 초기화되었습니다.")
 
 if __name__ == '__main__':
-    init_db() 
+    with app.app_context():
+        db = init_db()
+        print('데이터베이스가 성공적으로 초기화되었습니다.') 

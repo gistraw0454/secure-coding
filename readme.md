@@ -1,185 +1,186 @@
-# 중고거래 플랫폼
+# 보안 중고거래 플랫폼
 
-안전하고 편리한 중고거래 서비스를 제공하는 웹 애플리케이션입니다.
+안전한 중고거래를 위한 웹 플랫폼입니다. 사용자 인증, 상품 관리, 실시간 채팅, 안전 거래 기능을 제공합니다.
+
+## 시스템 요구사항
+
+- Python 3.8 이상
+- SQLite3
+- 웹 브라우저 (Chrome, Firefox, Safari 등)
+
+## 설치 방법
+
+1. 저장소 클론
+```bash
+git clone [repository-url]
+cd secure-coding
+```
+
+2. 가상환경 생성 및 활성화
+```bash
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# Linux/Mac
+source venv/bin/activate
+```
+
+3. 필요한 패키지 설치
+```bash
+pip install -r requirements.txt
+```
+
+## 서버 실행 방법
+
+1. 데이터베이스 초기화
+```bash
+python init_db.py
+```
+
+2. 서버 실행
+```bash
+python app.py
+```
+
+서버는 기본적으로 http://localhost:5000 에서 실행됩니다.
 
 ## 주요 기능
 
-- 사용자 인증 (회원가입/로그인)
-- 상품 등록 및 관리
-- 실시간 채팅
-- 안전한 거래 시스템
-- 신고 기능
-- 관리자 기능
+### 사용자 관리
+- 회원가입/로그인
+- 프로필 관리
+- 지갑 기능 (기본 10,000원 지급)
+- 사용자 신고 기능
 
-## 기술 스택
+### 상품 관리
+- 상품 등록/수정/삭제
+- 카테고리별 상품 조회
+- 상품 검색
+- 상품 신고 기능
 
-- Python 3.8+
-- Flask
-- SQLite3
-- Socket.IO
-- Bootstrap 5
-- HTML/CSS/JavaScript
+### 채팅 기능
+- 1:1 채팅
+- 전체 채팅
+- 실시간 메시지 전송
 
-## 환경 구축 가이드
+### 거래 시스템
+- 안전 거래 기능
+- 거래 내역 조회
+- 지갑 잔액 관리
+- 송금 기능
 
-### 1. 기본 요구사항
+### 관리자 기능
+- 사용자 관리 (활성화/정지)
+- 상품 관리 (활성화/비활성화)
+- 신고 내역 관리
+- 시스템 모니터링
 
-- Python 3.8 이상
-- pip (Python 패키지 관리자)
-- Git
+## 보안 기능
 
-### 2. Python 설치
-1. [Python 공식 웹사이트](https://www.python.org/downloads/)에서 Python 3.8 이상 버전을 다운로드
-2. 설치 시 "Add Python to PATH" 옵션 체크
-3. 설치 완료 후 버전 확인:
-   ```bash
-   python --version
-   ```
+### 사용자 인증
+- 비밀번호 해시화 (werkzeug.security)
+- 세션 관리
+- CSRF 보호
+- 로그인 시도 제한
 
-### 3. 프로젝트 클론 및 설정
+### 입력 검증
+- XSS 방지
+- SQL 인젝션 방지
+- 입력값 살균 처리
 
-1. 프로젝트 클론:
-   ```bash
-   git clone [repository_url]
-   cd secure-coding
-   ```
+### 접근 제어
+- 권한 기반 접근 제어
+- 관리자 전용 기능 보호
+- API 엔드포인트 보호
 
-2. 가상환경 생성 및 활성화:
-   ```bash
-   # Windows
-   python -m venv venv
-   venv\Scripts\activate
+### 데이터 보안
+- 데이터베이스 보안 설정
+- 민감 정보 보호
+- 에러 처리 및 로깅
 
-   # macOS/Linux
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+## API 엔드포인트
 
-3. 필요한 패키지 설치:
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+### 사용자 관련
+- POST /register : 회원가입
+- POST /login : 로그인
+- GET /logout : 로그아웃
+- GET /profile : 프로필 조회
+- POST /profile : 프로필 수정
 
-### 4. 데이터베이스 설정
+### 상품 관련
+- GET /products : 상품 목록 조회
+- POST /product/new : 상품 등록
+- GET /product/<id> : 상품 상세 조회
+- POST /product/<id>/edit : 상품 수정
+- POST /report_product/<id> : 상품 신고
 
-데이터베이스는 애플리케이션 최초 실행 시 자동으로 생성됩니다.
+### 채팅 관련
+- GET /chat/rooms : 채팅방 목록
+- GET /chat/room/<id> : 채팅방 입장
+- POST /chat/create/<product_id> : 채팅방 생성
+- WebSocket /chat : 실시간 채팅
 
-### 5. 환경 변수 설정
+### 거래 관련
+- GET /wallet : 지갑 조회
+- POST /transfer : 송금
+- GET /transactions : 거래 내역 조회
 
-1. 개발 환경 설정 (Windows):
-   ```bash
-   # CMD
-   set FLASK_ENV=development
-   set FLASK_DEBUG=1
-   set SECRET_KEY=your-secret-key-here
+### 관리자 관련
+- GET /admin : 관리자 대시보드
+- POST /admin/user/<id>/status : 사용자 상태 변경
+- POST /admin/product/<id>/status : 상품 상태 변경
 
-   # PowerShell
-   $env:FLASK_ENV = "development"
-   $env:FLASK_DEBUG = "1"
-   $env:SECRET_KEY = "your-secret-key-here"
-   ```
+## 데이터베이스 스키마
 
-2. 개발 환경 설정 (macOS/Linux):
-   ```bash
-   export FLASK_ENV=development
-   export FLASK_DEBUG=1
-   export SECRET_KEY=your-secret-key-here
-   ```
+### user 테이블
+- id (TEXT, PK)
+- username (TEXT, UNIQUE)
+- password (TEXT)
+- status (TEXT)
+- role (TEXT)
+- warning_count (INTEGER)
+- created_at (TIMESTAMP)
 
-### 6. SSL 인증서 설정 (선택사항)
+### product 테이블
+- id (TEXT, PK)
+- title (TEXT)
+- description (TEXT)
+- price (TEXT)
+- seller_id (TEXT, FK)
+- status (TEXT)
+- category (TEXT)
+- report_count (INTEGER)
+- created_at (TIMESTAMP)
 
-개발 환경에서 HTTPS를 사용하려면:
+### wallet 테이블
+- user_id (TEXT, PK, FK)
+- balance (INTEGER)
+- updated_at (TIMESTAMP)
 
-1. 자체 서명 인증서 생성:
-   ```bash
-   # Windows (OpenSSL 필요)
-   openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
+### money_transaction 테이블
+- id (TEXT, PK)
+- sender_id (TEXT, FK)
+- receiver_id (TEXT, FK)
+- amount (INTEGER)
+- description (TEXT)
+- created_at (TIMESTAMP)
 
-   # macOS/Linux
-   openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
-   ```
+### chat_room 테이블
+- id (TEXT, PK)
+- product_id (TEXT, FK)
+- buyer_id (TEXT, FK)
+- seller_id (TEXT, FK)
+- status (TEXT)
+- created_at (TIMESTAMP)
 
-2. 생성된 인증서 파일을 프로젝트 루트 디렉토리에 복사
-
-### 7. 애플리케이션 실행
-
-1. 개발 서버 실행:
-   ```bash
-   # 기본 실행
-   python app.py
-
-   # 특정 포트로 실행
-   python app.py --port 5000
-   ```
-
-2. 웹 브라우저에서 접속:
-   - HTTPS 사용 시: `https://localhost:443`
-   - HTTP 사용 시: `http://localhost:5000`
-
-### 8. 문제 해결
-
-1. 포트 충돌 시:
-   ```bash
-   # Windows
-   netstat -ano | findstr :443
-   taskkill /PID [프로세스ID] /F
-
-   # macOS/Linux
-   lsof -i :443
-   kill -9 [프로세스ID]
-   ```
-
-2. 패키지 설치 오류 시:
-   ```bash
-   pip install --upgrade pip setuptools wheel
-   pip install -r requirements.txt
-   ```
-
-3. 데이터베이스 초기화:
-   ```bash
-   # 기존 데이터베이스 삭제
-   rm market.db
-   # 새로 실행하면 자동으로 생성됨
-   ```
-
-## 개발 모드 vs 운영 모드
-
-### 개발 모드
-```bash
-# Windows
-set FLASK_ENV=development
-set FLASK_DEBUG=1
-
-# macOS/Linux
-export FLASK_ENV=development
-export FLASK_DEBUG=1
-```
-
-### 운영 모드
-```bash
-# Windows
-set FLASK_ENV=production
-set FLASK_DEBUG=0
-
-# macOS/Linux
-export FLASK_ENV=production
-export FLASK_DEBUG=0
-```
-
-## 주의사항
-
-1. 실제 운영 환경에서는 반드시 다음 사항을 확인하세요:
-   - 강력한 비밀키 사용
-   - SSL/TLS 인증서 설정
-   - 환경 변수를 통한 중요 설정 관리
-   - 디버그 모드 비활성화
-   - 적절한 로깅 설정
-
-2. 보안 설정:
-   - 모든 비밀키와 인증서는 안전하게 관리
-   - 환경 변수 사용
-   - 정기적인 업데이트 수행
+### report 테이블
+- id (TEXT, PK)
+- reporter_id (TEXT, FK)
+- target_id (TEXT)
+- target_type (TEXT)
+- reason (TEXT)
+- status (TEXT)
+- created_at (TIMESTAMP)
 
 ## 라이선스
 

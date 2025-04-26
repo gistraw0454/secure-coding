@@ -12,6 +12,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import time
 import os
+from werkzeug.security import generate_password_hash
 
 app = Flask(__name__)
 app.config.from_object('config.Config')
@@ -83,6 +84,19 @@ def init_db():
         cursor.execute("PRAGMA foreign_keys=ON")   # 외래 키 제약 조건 활성화
         cursor.execute("PRAGMA secure_delete=ON")  # 안전한 삭제 모드 활성화
         
+        # role 컬럼 추가 (없는 경우에만)
+        try:
+            cursor.execute("ALTER TABLE user ADD COLUMN role TEXT DEFAULT 'user'")
+            print('role 컬럼이 추가되었습니다.')
+        except sqlite3.OperationalError:
+            print('role 컬럼이 이미 존재합니다.')
+        
+        # admin 계정 업그레이드
+        cursor.execute("UPDATE user SET role = 'admin' WHERE username = 'admin'")
+        if cursor.rowcount > 0:
+            print('admin 계정이 관리자 권한으로 업그레이드되었습니다.')
+            db.commit()
+        
         # 읽기 전용 트랜잭션 설정
         def get_readonly_db():
             db = sqlite3.connect(DATABASE)
@@ -97,6 +111,7 @@ def init_db():
                 password TEXT NOT NULL,
                 bio TEXT,
                 status TEXT DEFAULT 'active',
+                role TEXT DEFAULT 'user',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_login TIMESTAMP,
                 warning_count INTEGER DEFAULT 0
@@ -622,12 +637,17 @@ def report_user(user_id):
 
 # 관리자용: 사용자 상태 관리
 @app.route('/admin')
+@login_required
 def admin_dashboard():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-        
+    # 관리자 권한 확인
     db = get_db()
     cursor = db.cursor()
+    cursor.execute("SELECT role FROM user WHERE id = ?", (session['user_id'],))
+    user = cursor.fetchone()
+    
+    if not user or user['role'] != 'admin':
+        flash('관리자 권한이 필요합니다.')
+        return redirect(url_for('dashboard'))
     
     # 사용자 목록 조회
     cursor.execute("""
@@ -666,39 +686,96 @@ def admin_dashboard():
     return render_template('admin.html', users=users, products=products, reports=reports)
 
 @app.route('/admin/user/<user_id>/status', methods=['POST'])
+@login_required
+@admin_required
 def update_user_status(user_id):
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-        
     new_status = request.form.get('status')
     if new_status not in ['active', 'suspended']:
-        flash('잘못된 상태값입니다.')
+        flash('잘못된 상태값입니다.', 'error')
         return redirect(url_for('admin_dashboard'))
-        
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("UPDATE user SET status = ? WHERE id = ?", (new_status, user_id))
-    db.commit()
     
-    flash('사용자 상태가 업데이트되었습니다.')
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # 관리자 자신을 정지시키는 것을 방지
+        if user_id == session['user_id']:
+            flash('자신의 계정은 정지할 수 없습니다.', 'error')
+            return redirect(url_for('admin_dashboard'))
+        
+        # 상태 변경
+        cursor.execute(
+            "UPDATE user SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (new_status, user_id)
+        )
+        
+        if cursor.rowcount == 0:
+            flash('사용자를 찾을 수 없습니다.', 'error')
+        else:
+            status_str = '정지' if new_status == 'suspended' else '활성화'
+            flash(f'사용자 상태가 {status_str}되었습니다.', 'success')
+            
+            # 정지된 경우 해당 사용자의 상품도 모두 비활성화
+            if new_status == 'suspended':
+                cursor.execute(
+                    "UPDATE product SET status = 'inactive' WHERE seller_id = ?",
+                    (user_id,)
+                )
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f'사용자 상태 변경 중 오류 발생: {str(e)}')
+        flash('상태 변경 중 오류가 발생했습니다.', 'error')
+    
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/product/<product_id>/status', methods=['POST'])
+@login_required
+@admin_required
 def update_product_status(product_id):
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-        
     new_status = request.form.get('status')
     if new_status not in ['active', 'inactive']:
-        flash('잘못된 상태값입니다.')
+        flash('잘못된 상태값입니다.', 'error')
         return redirect(url_for('admin_dashboard'))
-        
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("UPDATE product SET status = ? WHERE id = ?", (new_status, product_id))
-    db.commit()
     
-    flash('상품 상태가 업데이트되었습니다.')
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # 상품 정보 조회
+        cursor.execute("""
+            SELECT p.*, u.status as seller_status 
+            FROM product p 
+            JOIN user u ON p.seller_id = u.id 
+            WHERE p.id = ?
+        """, (product_id,))
+        product = cursor.fetchone()
+        
+        if not product:
+            flash('상품을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('admin_dashboard'))
+        
+        # 판매자가 정지 상태인 경우 상품 활성화 방지
+        if new_status == 'active' and product['seller_status'] == 'suspended':
+            flash('정지된 사용자의 상품은 활성화할 수 없습니다.', 'error')
+            return redirect(url_for('admin_dashboard'))
+        
+        # 상태 변경
+        cursor.execute(
+            "UPDATE product SET status = ? WHERE id = ?",
+            (new_status, product_id)
+        )
+        
+        status_str = '비활성화' if new_status == 'inactive' else '활성화'
+        flash(f'상품이 {status_str}되었습니다.', 'success')
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f'상품 상태 변경 중 오류 발생: {str(e)}')
+        flash('상태 변경 중 오류가 발생했습니다.', 'error')
+    
     return redirect(url_for('admin_dashboard'))
 
 # 상품 신고
@@ -747,9 +824,11 @@ def report_product(product_id):
 
 # 1대1 채팅방 생성
 @app.route('/chat/create/<product_id>', methods=['POST'])
+@login_required
 def create_chat_room(product_id):
     if 'user_id' not in session:
-        return jsonify({'error': '로그인이 필요합니다.'}), 401
+        flash('로그인이 필요합니다.')
+        return redirect(url_for('login'))
         
     db = get_db()
     cursor = db.cursor()
@@ -758,11 +837,13 @@ def create_chat_room(product_id):
     cursor.execute("SELECT seller_id FROM product WHERE id = ?", (product_id,))
     product = cursor.fetchone()
     if not product:
-        return jsonify({'error': '존재하지 않는 상품입니다.'}), 404
+        flash('존재하지 않는 상품입니다.')
+        return redirect(url_for('dashboard'))
         
     # 판매자와 동일인인 경우 채팅방 생성 불가
     if product['seller_id'] == session['user_id']:
-        return jsonify({'error': '자신의 상품에는 채팅방을 생성할 수 없습니다.'}), 400
+        flash('자신의 상품에는 채팅방을 생성할 수 없습니다.')
+        return redirect(url_for('view_product', product_id=product_id))
         
     # 이미 존재하는 채팅방 확인
     cursor.execute("""
@@ -772,7 +853,7 @@ def create_chat_room(product_id):
     
     existing_room = cursor.fetchone()
     if existing_room:
-        return jsonify({'room_id': existing_room['id']}), 200
+        return redirect(url_for('view_chat_room', room_id=existing_room['id']))
         
     # 새 채팅방 생성
     room_id = str(uuid.uuid4())
@@ -782,7 +863,52 @@ def create_chat_room(product_id):
     """, (room_id, product_id, session['user_id'], product['seller_id']))
     
     db.commit()
-    return jsonify({'room_id': room_id, 'message': '채팅방이 생성되었습니다.'}), 201
+    flash('채팅방이 생성되었습니다.')
+    return redirect(url_for('view_chat_room', room_id=room_id))
+
+# 채팅방 보기
+@app.route('/chat/room/<room_id>')
+@login_required
+def view_chat_room(room_id):
+    db = get_db()
+    cursor = db.cursor()
+    
+    # 채팅방 정보 조회
+    cursor.execute("""
+        SELECT cr.*, p.title as product_title, p.seller_id,
+               s.username as seller_name, b.username as buyer_name
+        FROM chat_room cr
+        JOIN product p ON cr.product_id = p.id
+        JOIN user s ON p.seller_id = s.id
+        JOIN user b ON cr.buyer_id = b.id
+        WHERE cr.id = ?
+    """, (room_id,))
+    
+    room = cursor.fetchone()
+    if not room:
+        flash('존재하지 않는 채팅방입니다.')
+        return redirect(url_for('dashboard'))
+    
+    # 채팅방 접근 권한 확인
+    if room['buyer_id'] != session['user_id'] and room['seller_id'] != session['user_id']:
+        flash('접근 권한이 없습니다.')
+        return redirect(url_for('dashboard'))
+    
+    # 채팅 메시지 조회
+    cursor.execute("""
+        SELECT cm.*, u.username as sender_name
+        FROM chat_message cm
+        JOIN user u ON cm.sender_id = u.id
+        WHERE cm.room_id = ?
+        ORDER BY cm.created_at ASC
+    """, (room_id,))
+    
+    messages = cursor.fetchall()
+    
+    return render_template('chat/room.html',
+                         room=room,
+                         messages=messages,
+                         current_user_id=session['user_id'])
 
 # 채팅방 목록 조회
 @app.route('/chat/rooms')
@@ -1223,6 +1349,77 @@ def add_login_attempt(username, ip_address, success):
     """, (attempt_id, username, ip_address, success))
     
     db.commit()
+
+def is_admin():
+    if 'user_id' not in session:
+        return False
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT role FROM user WHERE id = ?", (session['user_id'],))
+    user = cursor.fetchone()
+    return user and user['role'] == 'admin'
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not is_admin():
+            flash('관리자 권한이 필요합니다.')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/admin/create', methods=['GET', 'POST'])
+def create_admin():
+    if request.method == 'POST':
+        username = sanitize_input(request.form.get('username', '').strip())
+        password = request.form.get('password', '')
+        admin_key = request.form.get('admin_key', '')
+
+        # 입력값 검증
+        if not username or not password or not admin_key:
+            flash('모든 필드를 입력해주세요.', 'error')
+            return redirect(url_for('create_admin'))
+
+        # 사용자명 형식 검증
+        if not re.match(r'^[a-zA-Z0-9_]{4,20}$', username):
+            flash('사용자명은 4-20자의 영문, 숫자, 언더스코어만 사용 가능합니다.', 'error')
+            return redirect(url_for('create_admin'))
+
+        # 비밀번호 복잡도 검증
+        if len(password) < 8 or not re.search(r'[A-Za-z]', password) or not re.search(r'[0-9]', password) or not re.search(r'[^A-Za-z0-9]', password):
+            flash('비밀번호는 8자 이상의 영문, 숫자, 특수문자 조합이어야 합니다.', 'error')
+            return redirect(url_for('create_admin'))
+
+        # 관리자 키 검증
+        if admin_key != app.config['ADMIN_KEY']:
+            flash('관리자 키가 올바르지 않습니다.', 'error')
+            return redirect(url_for('create_admin'))
+
+        try:
+            # 사용자명 중복 검사
+            cursor = get_db().cursor()
+            cursor.execute('SELECT 1 FROM user WHERE username = ?', (username,))
+            if cursor.fetchone():
+                flash('이미 존재하는 사용자명입니다.', 'error')
+                return redirect(url_for('create_admin'))
+
+            # 관리자 계정 생성
+            hashed_password = generate_password_hash(password)
+            cursor.execute(
+                'INSERT INTO user (username, password, role, wallet_balance) VALUES (?, ?, ?, ?)',
+                (username, hashed_password, 'admin', 10000)
+            )
+            get_db().commit()
+            flash('관리자 계정이 성공적으로 생성되었습니다.', 'success')
+            return redirect(url_for('login'))
+
+        except Exception as e:
+            get_db().rollback()
+            app.logger.error(f'관리자 계정 생성 중 오류 발생: {str(e)}')
+            flash('계정 생성 중 오류가 발생했습니다. 나중에 다시 시도해주세요.', 'error')
+            return redirect(url_for('create_admin'))
+
+    return render_template('create_admin.html')
 
 if __name__ == '__main__':
     init_db()

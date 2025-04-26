@@ -2,92 +2,77 @@
 
 {% block title %}전체 채팅{% endblock %}
 
-{% block extra_css %}
-<style>
-    #global-messages {
-        height: 500px;
-        overflow-y: auto;
-        border: 1px solid #dee2e6;
-        border-radius: 0.25rem;
-        padding: 1rem;
-        margin-bottom: 1rem;
-        background-color: #f8f9fa;
-    }
-    .message {
-        margin-bottom: 0.5rem;
-        padding: 0.5rem;
-        border-radius: 0.25rem;
-    }
-    .message.mine {
-        background-color: #007bff;
-        color: white;
-        margin-left: 20%;
-    }
-    .message.other {
-        background-color: white;
-        margin-right: 20%;
-        border: 1px solid #dee2e6;
-    }
-    .message .sender {
-        font-size: 0.8rem;
-        font-weight: bold;
-        margin-bottom: 0.2rem;
-    }
-    .message.mine .sender {
-        color: #e9ecef;
-    }
-    .message .time {
-        font-size: 0.7rem;
-        color: #6c757d;
-    }
-    .message.mine .time {
-        color: #e9ecef;
-    }
-    .online-users {
-        background-color: white;
-        border: 1px solid #dee2e6;
-        border-radius: 0.25rem;
-        padding: 1rem;
-    }
-    .chat-container {
-        max-width: 800px;
-        margin: 0 auto;
-    }
-</style>
-{% endblock %}
-
 {% block content %}
-<div class="chat-container">
-    <div class="card mb-4">
-        <div class="card-body">
-            <h2 class="card-title mb-4">전체 채팅방</h2>
-            <div id="global-messages">
-                {% for message in messages %}
-                <div class="message {% if message.sender_id == session.user_id %}mine{% else %}other{% endif %}">
-                    <div class="sender">{{ message.sender_name }}</div>
-                    <div class="content">{{ message.message }}</div>
-                    <div class="time">{{ message.created_at }}</div>
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 mx-auto">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">전체 채팅</h4>
+                    <span class="badge bg-primary">{{ current_user.username }}</span>
                 </div>
-                {% endfor %}
+                <div class="card-body">
+                    <div id="chat-messages" class="mb-3" style="height: 500px; overflow-y: auto;">
+                        {% for message in messages %}
+                        <div class="message {% if message.sender_id == session['user_id'] %}sent{% else %}received{% endif %} mb-2">
+                            <div class="d-flex align-items-center {% if message.sender_id == session['user_id'] %}justify-content-end{% endif %} mb-1">
+                                <small class="text-muted">{{ message.sender_name }}</small>
+                                <small class="text-muted ms-2">{{ message.created_at }}</small>
+                            </div>
+                            <div class="message-content p-2 rounded">
+                                {{ message.message }}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <form id="message-form" class="mt-3">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="input-group">
+                            <input type="text" id="message-input" class="form-control" placeholder="메시지를 입력하세요..." required maxlength="500">
+                            <button type="submit" class="btn btn-primary">전송</button>
+                        </div>
+                        <small class="text-muted">최대 500자까지 입력 가능합니다.</small>
+                    </form>
+                </div>
             </div>
-            <form id="message-form" class="input-group">
-                <input type="text" id="message-input" class="form-control" placeholder="메시지를 입력하세요...">
-                <button type="submit" class="btn btn-primary">전송</button>
-            </form>
         </div>
     </div>
 </div>
-{% endblock %}
 
-{% block extra_js %}
+<style>
+.message {
+    max-width: 70%;
+}
+.message.sent {
+    margin-left: auto;
+}
+.message.received {
+    margin-right: auto;
+}
+.message-content {
+    background-color: #f8f9fa;
+    display: inline-block;
+    word-break: break-word;
+}
+.message.sent .message-content {
+    background-color: #007bff;
+    color: white;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 <script>
+document.addEventListener('DOMContentLoaded', function() {
     const socket = io();
-    const messages = document.getElementById('global-messages');
     const messageForm = document.getElementById('message-form');
     const messageInput = document.getElementById('message-input');
-
+    const messagesDiv = document.getElementById('chat-messages');
+    
+    // 최초 로드 시 스크롤을 맨 아래로
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    
     // 메시지 전송
-    messageForm.addEventListener('submit', (e) => {
+    messageForm.addEventListener('submit', function(e) {
         e.preventDefault();
         const message = messageInput.value.trim();
         if (message) {
@@ -97,21 +82,33 @@
             messageInput.value = '';
         }
     });
-
-    // 새 메시지 수신
-    socket.on('global_message', (data) => {
+    
+    // 메시지 수신
+    socket.on('global_message', function(data) {
         const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${data.sender_id === '{{ session.user_id }}' ? 'mine' : 'other'}`;
+        const isSent = data.sender_id === '{{ session["user_id"] }}';
+        
+        messageDiv.className = `message ${isSent ? 'sent' : 'received'} mb-2`;
         messageDiv.innerHTML = `
-            <div class="sender">${data.sender_name}</div>
-            <div class="content">${data.message}</div>
-            <div class="time">${new Date(data.created_at).toLocaleString()}</div>
+            <div class="d-flex align-items-center ${isSent ? 'justify-content-end' : ''} mb-1">
+                <small class="text-muted">${data.sender_name}</small>
+                <small class="text-muted ms-2">${new Date(data.created_at).toLocaleString()}</small>
+            </div>
+            <div class="message-content p-2 rounded">
+                ${data.message}
+            </div>
         `;
-        messages.appendChild(messageDiv);
-        messages.scrollTop = messages.scrollHeight;
+        
+        messagesDiv.appendChild(messageDiv);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
     });
-
-    // 페이지 로드 시 스크롤을 맨 아래로
-    messages.scrollTop = messages.scrollHeight;
+    
+    // 입력 글자 수 제한
+    messageInput.addEventListener('input', function() {
+        if (this.value.length > 500) {
+            this.value = this.value.substring(0, 500);
+        }
+    });
+});
 </script>
 {% endblock %} 

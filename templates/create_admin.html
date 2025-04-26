@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}관리자 계정 생성{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="text-center mb-0">관리자 계정 생성</h2>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label for="username" class="form-label">사용자명</label>
+                            <input type="text" class="form-control" id="username" name="username" required>
+                            <div class="form-text">4-20자의 영문, 숫자, 언더스코어만 사용 가능합니다.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="password" class="form-label">비밀번호</label>
+                            <input type="password" class="form-control" id="password" name="password" required>
+                            <div class="form-text">8자 이상의 영문, 숫자, 특수문자 조합이어야 합니다.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="admin_key" class="form-label">관리자 키</label>
+                            <input type="password" class="form-control" id="admin_key" name="admin_key" required>
+                            <div class="form-text">관리자 권한 부여를 위한 키를 입력하세요.</div>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">계정 생성</button>
+                            <a href="{{ url_for('login') }}" class="btn btn-outline-secondary">취소</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 
