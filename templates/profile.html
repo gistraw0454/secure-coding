@@ -1,11 +1,35 @@
 {% extends "base.html" %}
 {% block title %}프로필{% endblock %}
 {% block content %}
-<h2>프로필 관리</h2>
-<p>사용자명: {{ user.username }}</p>
-<form method="post">
-  소개글: <br>
-  <textarea name="bio" rows="4" cols="50">{{ user.bio or '' }}</textarea><br>
-  <button type="submit">프로필 업데이트</button>
-</form>
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-body">
+                    <h4 class="card-title">프로필 정보</h4>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label for="username" class="form-label">사용자명</label>
+                            <input type="text" class="form-control" id="username" value="{{ user.username }}" readonly>
+                        </div>
+                        <div class="mb-3">
+                            <label for="bio" class="form-label">자기소개</label>
+                            <textarea class="form-control" id="bio" name="bio" rows="3">{{ user.bio or '' }}</textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">가입일</label>
+                            <p class="form-control-static">{{ user.created_at }}</p>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">마지막 로그인</label>
+                            <p class="form-control-static">{{ user.last_login or '로그인 기록 없음' }}</p>
+                        </div>
+                        <button type="submit" class="btn btn-primary">프로필 업데이트</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

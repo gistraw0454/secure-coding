@@ -402,30 +402,54 @@ def profile():
 @login_required
 def new_product():
     if request.method == 'POST':
-        title = sanitize_input(request.form['title'])
-        description = sanitize_input(request.form['description'])
-        price = request.form['price']
-        category = sanitize_input(request.form.get('category', ''))
-        
-        db = get_db()
-        cursor = db.cursor()
-        
-        # 사용자 상태 확인
-        cursor.execute("SELECT status FROM user WHERE id = ?", (session['user_id'],))
-        user = cursor.fetchone()
-        if user['status'] != 'active':
-            flash('정지된 계정은 상품을 등록할 수 없습니다.')
-            return redirect(url_for('dashboard'))
-        
-        product_id = str(uuid.uuid4())
-        cursor.execute(
-            "INSERT INTO product (id, title, description, price, seller_id, category) VALUES (?, ?, ?, ?, ?, ?)",
-            (product_id, title, description, price, session['user_id'], category)
-        )
-        db.commit()
-        flash('상품이 등록되었습니다.')
-        return redirect(url_for('dashboard'))
-    return render_template('new_product.html')
+        title = sanitize_input(request.form.get('title', '').strip())
+        description = sanitize_input(request.form.get('description', '').strip())
+        price = request.form.get('price', '').strip()
+        category = request.form.get('category', '').strip()
+
+        # 입력값 검증
+        if not all([title, description, price, category]):
+            flash('모든 필드를 입력해주세요.')
+            return redirect(url_for('new_product'))
+
+        # 가격 유효성 검사
+        try:
+            price_value = int(price)
+            if price_value < 0:
+                flash('가격은 0 이상이어야 합니다.')
+                return redirect(url_for('new_product'))
+        except ValueError:
+            flash('올바른 가격을 입력해주세요.')
+            return redirect(url_for('new_product'))
+
+        # XSS 방지를 위한 추가 검증
+        if len(title) > 100 or len(description) > 1000:
+            flash('제목 또는 설명이 너무 깁니다.')
+            return redirect(url_for('new_product'))
+
+        # 허용된 카테고리 검증
+        allowed_categories = ['전자기기', '의류', '도서', '생활용품', '기타']
+        if category not in allowed_categories:
+            flash('올바른 카테고리를 선택해주세요.')
+            return redirect(url_for('new_product'))
+
+        try:
+            db = get_db()
+            cursor = db.cursor()
+            product_id = str(uuid.uuid4())
+            cursor.execute(
+                "INSERT INTO product (id, title, description, price, seller_id, category) VALUES (?, ?, ?, ?, ?, ?)",
+                (product_id, title, description, price, session['user_id'], category)
+            )
+            db.commit()
+            flash('상품이 등록되었습니다.')
+            return redirect(url_for('view_product', product_id=product_id))
+        except sqlite3.Error as e:
+            db.rollback()
+            flash('상품 등록 중 오류가 발생했습니다. 다시 시도해주세요.')
+            return redirect(url_for('new_product'))
+
+    return render_template('product/new.html')
 
 # 상품 목록 조회 (필터링 기능 추가)
 @app.route('/products')
